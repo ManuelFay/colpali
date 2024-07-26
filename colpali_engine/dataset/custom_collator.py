@@ -32,6 +32,11 @@ class CustomCollator:
         if self.tokenizer and self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
+        if self.processor.__class__.__name__ == "PaliGemmaProcessor":
+            if self.processor.tokenizer.padding_side != "right":
+                print("Setting padding side to right")
+                self.processor.tokenizer.padding_side = "right"
+
     def __call__(self, examples):
         if self.processor is None:
             return self.forward_text(examples)
