@@ -167,7 +167,18 @@ class CustomCollator:
         if all([t is None for t in texts_query]):
             print("All queries are None. Returning None for all queries.")
         elif any([t is None for t in texts_query]):
-            raise ValueError("Some queries are None. This collator does not support None queries yet.")
+            # if it's the first query that is not None but the rest are None, then it's hard negatives
+            if texts_query[0] is not None and all([t is None for t in texts_query[1:]]):
+                batch_query = self.processor(
+                    images=images[:1],
+                    # NOTE: the image is not used in batch_query but it is required for calling the processor
+                    text=texts_query[:1],
+                    return_tensors="pt",
+                    padding="longest",
+                    max_length=self.max_length + self.processor.image_seq_length,
+                )
+            else:
+                raise ValueError("Some queries are None. This collator does not support None queries yet.")
         else:
             batch_query = self.processor(
                 images=images,  # NOTE: the image is not used in batch_query but it is required for calling the processor
