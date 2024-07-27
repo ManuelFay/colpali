@@ -177,6 +177,9 @@ class CustomCollator:
                     padding="longest",
                     max_length=self.max_length + self.processor.image_seq_length,
                 )
+                del batch_query["pixel_values"]
+                batch_query["input_ids"] = batch_query["input_ids"][..., self.processor.image_seq_length:]
+                batch_query["attention_mask"] = batch_query["attention_mask"][..., self.processor.image_seq_length:]
             else:
                 raise ValueError("Some queries are None. This collator does not support None queries yet.")
         else:
