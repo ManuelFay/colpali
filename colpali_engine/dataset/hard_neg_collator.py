@@ -27,16 +27,19 @@ class HardNegCollator(CustomCollator):
         return target_query
 
     def __call__(self, examples):
-        assert len(examples) == 1, "HardNegCollator only supports a single example at at time"
-        example = examples[0]
-        pos_image = self.get_image_from_docid(example['positive_passages'][0]['docid'])
-        pos_query = example['query']
-        neg_images_ids = [doc["docid"] for doc in example['negative_passages'][:3]]
-        neg_images = [self.get_image_from_docid(docid) for docid in neg_images_ids]
+        # assert len(examples) == 1, "HardNegCollator only supports a single example at at time"
 
-        examples = [
-            {"image": img, "query": query} for img, query in zip([pos_image] + neg_images, [pos_query] + [None] * len(neg_images))
-        ]
+        tmp_examples = examples
+        examples = []
+        for example in tmp_examples:
+            pos_image = self.get_image_from_docid(example['positive_passages'][0]['docid'])
+            pos_query = example['query']
+            neg_images_ids = [doc["docid"] for doc in example['negative_passages'][:3]]
+            neg_images = [self.get_image_from_docid(docid) for docid in neg_images_ids]
+
+            examples += [
+                {"image": img, "query": query} for img, query in zip([pos_image] + neg_images, [pos_query] + [None] * len(neg_images))
+            ]
 
         if self.processor is None:
             return self.forward_text(examples)
