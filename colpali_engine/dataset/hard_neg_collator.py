@@ -35,7 +35,7 @@ class HardNegCollator(CustomCollator):
         neg_images = [self.get_image_from_docid(docid) for docid in neg_images_ids]
 
         examples = [
-            {"image": img, "query": query} for img, query in zip([pos_image] + neg_images, [pos_query] + None * len(neg_images))
+            {"image": img, "query": query} for img, query in zip([pos_image] + neg_images, [pos_query] + [None] * len(neg_images))
         ]
 
         if self.processor is None:
