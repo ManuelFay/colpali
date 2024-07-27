@@ -26,7 +26,7 @@ config:
   run_eval: true
   add_suffix: true
   loss_func:
-    (): colpali_engine.loss.colbert_loss.ColbertPairwiseCELoss
+    (): colpali_engine.loss.colbert_loss.ColbertPairwiseNegativeCELoss
   tr_args: !import ../tr_args/default_neg_tr_args.yaml
   peft_config:
     (): peft.LoraConfig

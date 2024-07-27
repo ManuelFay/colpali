@@ -34,13 +34,14 @@ class HardNegCollator(CustomCollator):
         for example in tmp_examples:
             pos_image = self.get_image_from_docid(example['positive_passages'][0]['docid'])
             pos_query = example['query']
-            neg_images_ids = [doc["docid"] for doc in example['negative_passages'][:3]]
+            neg_images_ids = [doc["docid"] for doc in example['negative_passages'][:1]]
             neg_images = [self.get_image_from_docid(docid) for docid in neg_images_ids]
 
             examples += [
-                {"image": img, "query": query} for img, query in zip([pos_image] + neg_images, [pos_query] + [None] * len(neg_images))
+                {"image": pos_image, "query": pos_query, "neg_image": neg_images[0]}
             ]
 
+        # reorder examples
         if self.processor is None:
             return self.forward_text(examples)
         if self.processor.__class__.__name__ == "Idefics2Processor":

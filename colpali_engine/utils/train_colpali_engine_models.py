@@ -14,7 +14,7 @@ from transformers import AutoTokenizer, Idefics2Processor, PreTrainedModel, PreT
 from colpali_engine.dataset.custom_collator import CustomCollator
 from colpali_engine.dataset.hard_neg_collator import HardNegCollator
 from colpali_engine.loss.colbert_loss import BiEncoderLoss, BiPairwiseCELoss, ColbertLoss, ColbertPairwiseCELoss
-from colpali_engine.trainer.contrastive_trainer import ContrastiveTrainer
+from colpali_engine.trainer.contrastive_trainer import ContrastiveTrainer, ContrastiveNegativeTrainer
 from colpali_engine.trainer.retrieval_evaluator import CustomEvaluator
 from colpali_engine.utils.gpu_stats import print_gpu_utilization, print_summary
 
@@ -113,15 +113,28 @@ class ColModelTraining:
 
     def train(self) -> None:
 
-        trainer = ContrastiveTrainer(
-            model=self.model,
-            train_dataset=self.dataset["train"],
-            eval_dataset=self.dataset["test"],
-            args=self.config.tr_args,
-            data_collator=self.collator,
-            loss_func=self.config.loss_func,
-            is_vision_model=self.config.processor is not None,
-        )
+        if isinstance(self.collator, HardNegCollator):
+            print("Training with hard negatives")
+            trainer = ContrastiveNegativeTrainer(
+                model=self.model,
+                train_dataset=self.dataset["train"],
+                eval_dataset=self.dataset["test"],
+                args=self.config.tr_args,
+                data_collator=self.collator,
+                loss_func=self.config.loss_func,
+                is_vision_model=self.config.processor is not None,
+            )
+        else:
+            print("Training with in-batch negatives")
+            trainer = ContrastiveTrainer(
+                model=self.model,
+                train_dataset=self.dataset["train"],
+                eval_dataset=self.dataset["test"],
+                args=self.config.tr_args,
+                data_collator=self.collator,
+                loss_func=self.config.loss_func,
+                is_vision_model=self.config.processor is not None,
+            )
         trainer.args.remove_unused_columns = False
 
         result = trainer.train()

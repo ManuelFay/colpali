@@ -138,6 +138,7 @@ class CustomCollator:
         texts_doc = []
         texts_query = []
         images = []
+        neg_images = []
         for example in examples:
 
             if example["image"] is None:
@@ -146,6 +147,10 @@ class CustomCollator:
             image = example["image"].convert("RGB")
             images.append(image)
             texts_doc.append("Describe the image.")
+
+            if example["neg_image"]:
+                neg_image = example["neg_image"].convert("RGB")
+                neg_images.append(neg_image)
 
             if example["query"] is None:
                 texts_query.append(None)
@@ -162,26 +167,23 @@ class CustomCollator:
             max_length=self.max_length + self.processor.image_seq_length,
         )
 
+        batch_neg_doc=None
+        if len(neg_images) > 0:
+            batch_neg_doc = self.processor(
+                text=texts_doc,
+                images=neg_images,
+                return_tensors="pt",
+                padding="longest",
+                max_length=self.max_length + self.processor.image_seq_length,
+            )
+
         batch_query = None
         # check if some but not all queries are None
         if all([t is None for t in texts_query]):
             print("All queries are None. Returning None for all queries.")
         elif any([t is None for t in texts_query]):
             # if it's the first query that is not None but the rest are None, then it's hard negatives
-            if texts_query[0] is not None and all([t is None for t in texts_query[1:]]):
-                batch_query = self.processor(
-                    images=images[:1],
-                    # NOTE: the image is not used in batch_query but it is required for calling the processor
-                    text=texts_query[:1],
-                    return_tensors="pt",
-                    padding="longest",
-                    max_length=self.max_length + self.processor.image_seq_length,
-                )
-                del batch_query["pixel_values"]
-                batch_query["input_ids"] = batch_query["input_ids"][..., self.processor.image_seq_length:]
-                batch_query["attention_mask"] = batch_query["attention_mask"][..., self.processor.image_seq_length:]
-            else:
-                raise ValueError("Some queries are None. This collator does not support None queries yet.")
+            raise ValueError("Some queries are None. This collator does not support None queries yet.")
         else:
             batch_query = self.processor(
                 images=images,  # NOTE: the image is not used in batch_query but it is required for calling the processor
@@ -200,6 +202,9 @@ class CustomCollator:
         if batch_query is not None:
             batch_query = {f"query_{k}": v for k, v in batch_query.items()}
             batch_doc.update(batch_query)
+        if batch_neg_doc is not None:
+            batch_neg_doc = {f"neg_doc_{k}": v for k, v in batch_neg_doc.items()}
+            batch_doc.update(batch_neg_doc)
 
         return batch_doc
 

@@ -95,6 +95,39 @@ class ColbertPairwiseCELoss(torch.nn.Module):
         return loss
 
 
+class ColbertPairwiseNegativeCELoss(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.ce_loss = CrossEntropyLoss()
+
+    def forward(self, query_embeddings, doc_embeddings, neg_doc_embeddings):
+        """
+        query_embeddings: (batch_size, num_query_tokens, dim)
+        doc_embeddings: (batch_size, num_doc_tokens, dim)
+
+        Positive scores are the diagonal of the scores matrix.
+        """
+
+        # Compute the ColBERT scores
+        pos_scores = (
+            torch.einsum("bnd,csd->bcns", query_embeddings, doc_embeddings).max(dim=3)[0].sum(dim=2)
+        )  # (batch_size, batch_size)
+
+        neg_scores = (
+            torch.einsum("bnd,csd->bcns", query_embeddings, neg_doc_embeddings).max(dim=3)[0].sum(dim=2)
+        )
+
+        # Compute the loss
+        # The loss is computed as the negative log of the softmax of the positive scores
+        # relative to the negative scores.
+        # This can be simplified to log-sum-exp of negative scores minus the positive score
+        # for numerical stability.
+        # torch.vstack((pos_scores, neg_scores)).T.softmax(1)[:, 0].log()*(-1)
+        loss = F.softplus(neg_scores - pos_scores).mean()
+
+        return loss
+
+
 class BiPairwiseCELoss(torch.nn.Module):
     def __init__(self):
         super().__init__()
