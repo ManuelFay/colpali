@@ -236,11 +236,21 @@ class ColModelTraining:
 
     def eval(self) -> None:
 
-        print("Evaluating on validation set")
-        metrics = self.eval_dataset(self.dataset["test"])
-        print(f"Metrics for validation set: {metrics}")
-        all_metrics = {"validation_set": metrics}
+        all_metrics = {}
+        try:
+            print("Evaluating on validation set")
+            metrics = self.eval_dataset(self.dataset["test"])
+            print(f"Metrics for validation set: {metrics}")
+            all_metrics["validation_set"] = metrics
+        except Exception as e:
+            print(f"Error evaluating validation set: {e}")
 
+        # switching to normal collator
+        self.collator = CustomCollator(
+            processor=self.config.processor,
+            tokenizer=self.config.tokenizer,
+            max_length=self.config.max_length
+        )
         if self.config.eval_dataset_loader is not None:
             for test_name, test_dataset_loading_func in self.config.eval_dataset_loader.items():
                 print(f"Evaluating {test_name}")
