@@ -108,33 +108,13 @@ class ColbertPairwiseNegativeCELoss(torch.nn.Module):
         Positive scores are the diagonal of the scores matrix.
         """
 
-        print(query_embeddings.shape, doc_embeddings.shape, neg_doc_embeddings.shape)
-
-        print("query_embeddings")
-        print(query_embeddings)
-
-        print("doc_embeddings")
-        print(doc_embeddings)
-
-        print("neg_doc_embeddings")
-        print(neg_doc_embeddings)
-
         # Compute the ColBERT scores
-        pos_scores = (
-            torch.einsum("bnd,csd->bcns", query_embeddings, doc_embeddings).max(dim=3)[0].sum(dim=2)
-        )  # (batch_size, batch_size)
-
-        neg_scores = (
-            torch.einsum("bnd,csd->bcns", query_embeddings, neg_doc_embeddings).max(dim=3)[0].sum(dim=2)
-        )
+        pos_scores = torch.einsum("bnd,bsd->bns", query_embeddings, doc_embeddings).max(dim=2)[0].sum(dim=1)
+        neg_scores = torch.einsum("bnd,bsd->bns", query_embeddings, neg_doc_embeddings).max(dim=2)[0].sum(dim=1)
 
         print(pos_scores.shape, neg_scores.shape)
 
-        print("pos_scores")
         print(pos_scores - neg_scores)
-
-        print(pos_scores)
-
 
         # Compute the loss
         # The loss is computed as the negative log of the softmax of the positive scores
