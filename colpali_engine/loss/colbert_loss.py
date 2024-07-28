@@ -117,6 +117,13 @@ class ColbertPairwiseNegativeCELoss(torch.nn.Module):
             torch.einsum("bnd,csd->bcns", query_embeddings, neg_doc_embeddings).max(dim=3)[0].sum(dim=2)
         )
 
+        print(pos_scores.shape, neg_scores.shape)
+
+        print(pos_scores - neg_scores)
+
+        print(pos_scores)
+
+
         # Compute the loss
         # The loss is computed as the negative log of the softmax of the positive scores
         # relative to the negative scores.

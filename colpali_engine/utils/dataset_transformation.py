@@ -75,10 +75,11 @@ def load_train_set_with_tabfquad() -> DatasetDict:
     ds_dict = DatasetDict({"train": dataset, "test": dataset_eval})
     return ds_dict
 
+
 def load_docmatix_ir_negs() -> Tuple[DatasetDict, Dataset]:
     base_path = "./data_dir/" if USE_LOCAL_DATASET else "Tevatron/"
     dataset = load_dataset(base_path + "docmatix-ir", split="train")
-    dataset = dataset.select(range(40000))
+    dataset = dataset.select(range(10500))
 
     dataset_eval = dataset.select(range(500))
     dataset = dataset.select(range(500, len(dataset)))
