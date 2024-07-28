@@ -148,7 +148,7 @@ class CustomCollator:
             images.append(image)
             texts_doc.append("Describe the image.")
 
-            if example["neg_image"]:
+            if "neg_image" in example and example["neg_image"] is not None:
                 neg_image = example["neg_image"].convert("RGB")
                 neg_images.append(neg_image)
 
@@ -167,7 +167,7 @@ class CustomCollator:
             max_length=self.max_length + self.processor.image_seq_length,
         )
 
-        batch_neg_doc=None
+        batch_neg_doc = None
         if len(neg_images) > 0:
             batch_neg_doc = self.processor(
                 text=texts_doc,

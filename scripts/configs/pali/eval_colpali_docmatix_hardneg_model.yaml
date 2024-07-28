@@ -3,7 +3,7 @@ config:
   output_dir: !path ../../../models/without_tabfquad/eval_colpali_docmatix_hardneg_3b-mix-448
   processor:
     () : colpali_engine.utils.wrapper.AutoProcessorWrapper
-    pretrained_model_name_or_path: "./models/paligemma-3b-mix-448"
+    pretrained_model_name_or_path: !path ../../../models/without_tabfquad/train_colpali_docmatix_hardneg_3b-mix-448
     max_length: 50
   pretrained_peft_model_name_or_path: !path ../../../models/without_tabfquad/train_colpali_docmatix_hardneg_3b-mix-448
   model:
