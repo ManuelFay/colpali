@@ -121,7 +121,7 @@ class ColbertPairwiseNegativeCELoss(torch.nn.Module):
         import matplotlib.pyplot as plt
         import random
 
-        plt.imsave(f"save_{random.randint(0,1000)}.png", arr.detach().cpu().numpy())
+        plt.imsave(f"save_{random.randint(0,1000)}.png", arr.detach().float().cpu().numpy())
 
         # compute
         # Compute the ColBERT scores
