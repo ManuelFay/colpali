@@ -21,10 +21,6 @@ class HardNegCollator(CustomCollator):
         target_image = self.image_dataset[int(example_idx)]['images'][int(image_idx)]
         return target_image
 
-    def get_query_from_queryid(self, queryid):
-        example_idx, query_idx = queryid.split('_')
-        target_query = self.image_dataset[int(example_idx)]['queries'][int(query_idx)]
-        return target_query
 
     def __call__(self, examples):
         # assert len(examples) == 1, "HardNegCollator only supports a single example at at time"
