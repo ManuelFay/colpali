@@ -16,4 +16,4 @@
   warmup_steps: 100
   learning_rate: 5e-5
   save_total_limit: 1
-  optim: "paged_adamw_8bit"
+  # optim: "paged_adamw_8bit"
