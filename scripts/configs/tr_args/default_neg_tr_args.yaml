@@ -2,10 +2,10 @@
 output_dir: null
 overwrite_output_dir: true
 num_train_epochs: 1
-per_device_train_batch_size: 2
+per_device_train_batch_size: 4
 # 6 x 8 gpus = 48 batch size
 # gradient_accumulation_steps: 4
-per_device_eval_batch_size: 2
+per_device_eval_batch_size: 4
 eval_strategy: "steps"
 # dataloader_num_workers: 8
 # bf16: true

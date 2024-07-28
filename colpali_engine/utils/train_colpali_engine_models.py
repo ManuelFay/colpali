@@ -13,7 +13,7 @@ from transformers import AutoTokenizer, Idefics2Processor, PreTrainedModel, PreT
 
 from colpali_engine.dataset.custom_collator import CustomCollator
 from colpali_engine.dataset.hard_neg_collator import HardNegCollator
-from colpali_engine.loss.colbert_loss import BiEncoderLoss, BiPairwiseCELoss, ColbertLoss, ColbertPairwiseCELoss
+from colpali_engine.loss.colbert_loss import BiEncoderLoss, BiPairwiseCELoss, ColbertLoss, ColbertPairwiseCELoss, ColbertPairwiseNegativeCELoss
 from colpali_engine.trainer.contrastive_trainer import ContrastiveTrainer, ContrastiveNegativeTrainer
 from colpali_engine.trainer.retrieval_evaluator import CustomEvaluator
 from colpali_engine.utils.gpu_stats import print_gpu_utilization, print_summary
@@ -108,6 +108,7 @@ class ColModelTraining:
             is_multi_vector=(
                 isinstance(self.config.loss_func, ColbertLoss)
                 or isinstance(self.config.loss_func, ColbertPairwiseCELoss)
+                or isinstance(self.config.loss_func, ColbertPairwiseNegativeCELoss)
             )
         )
 
