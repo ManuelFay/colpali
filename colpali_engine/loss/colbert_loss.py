@@ -133,6 +133,8 @@ class ColbertPairwiseNegativeCELoss(torch.nn.Module):
         pos_scores = torch.einsum("bnd,bsd->bns", query_embeddings, doc_embeddings).max(dim=2)[0].sum(dim=1)
         neg_scores = torch.einsum("bnd,bsd->bns", query_embeddings, neg_doc_embeddings).max(dim=2)[0].sum(dim=1)
 
+        breakpoint()
+
 
         print(pos_scores.shape, neg_scores.shape)
 
