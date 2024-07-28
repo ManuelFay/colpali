@@ -107,8 +107,6 @@ class ColbertPairwiseNegativeCELoss(torch.nn.Module):
         """
 
         # shift neg_doc_embeddings by 1
-        neg_doc_embeddings = torch.roll(neg_doc_embeddings, 1, 0)
-
         print(query_embeddings.shape, doc_embeddings.shape, neg_doc_embeddings.shape)
 
         print(query_embeddings[0])
