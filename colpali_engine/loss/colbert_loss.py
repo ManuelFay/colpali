@@ -109,19 +109,24 @@ class ColbertPairwiseNegativeCELoss(torch.nn.Module):
         # shift neg_doc_embeddings by 1
         print(query_embeddings.shape, doc_embeddings.shape, neg_doc_embeddings.shape)
 
-        print(query_embeddings[0])
-        print(doc_embeddings[0])
-        print(neg_doc_embeddings[0])
+        # print(query_embeddings[0])
+        # print(doc_embeddings[0])
+        # print(neg_doc_embeddings[0])
 
-
-        print(torch.einsum("qd,sd->qs", query_embeddings[0], doc_embeddings[0]))
 
         arr = torch.einsum("qd,sd->qs", query_embeddings[0], doc_embeddings[0])
         # viz
         import matplotlib.pyplot as plt
         import random
 
-        plt.imsave(f"save_{random.randint(0,1000)}.png", arr.detach().float().cpu().numpy())
+        print(arr)
+
+        r = random.randint(0,1000)
+        plt.imsave(f"save_{r}.png", arr.detach().float().cpu().numpy())
+
+        arr2 = torch.einsum("qd,sd->qs", query_embeddings[0], neg_doc_embeddings[0])
+        print(arr2)
+        plt.imsave(f"save_{r}_neg.png", arr2.detach().float().cpu().numpy())
 
         # compute
         # Compute the ColBERT scores
