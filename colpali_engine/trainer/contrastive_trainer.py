@@ -74,17 +74,6 @@ class ContrastiveNegativeTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False):
         query_outputs = model(input_ids=inputs["query_input_ids"], attention_mask=inputs["query_attention_mask"])
 
-        # save matplotlib image visualization
-        import matplotlib.pyplot as plt
-        import random
-
-        random_num = random.randint(0, 1000)
-        arr = inputs["neg_doc_pixel_values"][0].to("cpu").numpy()
-        plt.imsave(f"neg_doc_pixel_values_{random_num}.png", (arr.transpose(1, 2, 0) - arr.min())/(arr.max() - arr.min()))
-        arr = inputs["doc_pixel_values"][0].to("cpu").numpy()
-        plt.imsave(f"doc_pixel_values_{random_num}.png", (arr.transpose(1, 2, 0) - arr.min())/(arr.max() - arr.min()))
-
-
         if self.is_vision_model:
             if "doc_pixel_attention_mask" not in inputs:
                 doc_outputs = model(

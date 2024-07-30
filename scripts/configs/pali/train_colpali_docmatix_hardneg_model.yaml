@@ -1,6 +1,6 @@
 config:
   (): colpali_engine.utils.train_colpali_engine_models.ColModelTrainingConfig
-  output_dir: !path ../../../models/without_tabfquad/train_colpali_docmatix_hardneg_3b-mix-448
+  output_dir: !path ../../../models/train_colpali_docmatix_hardneg_ib_3b-mix-448
   processor:
     () : colpali_engine.utils.wrapper.AutoProcessorWrapper
     pretrained_model_name_or_path: "./models/paligemma-3b-mix-448"
@@ -27,6 +27,7 @@ config:
   add_suffix: true
   loss_func:
     (): colpali_engine.loss.colbert_loss.ColbertPairwiseNegativeCELoss
+    in_batch_term: true
   tr_args: !import ../tr_args/default_neg_tr_args.yaml
   peft_config:
     (): peft.LoraConfig

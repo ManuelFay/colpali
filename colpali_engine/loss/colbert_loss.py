@@ -96,60 +96,37 @@ class ColbertPairwiseCELoss(torch.nn.Module):
 
 
 class ColbertPairwiseNegativeCELoss(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, in_batch_term=False):
         super().__init__()
         self.ce_loss = CrossEntropyLoss()
+        self.in_batch_term = in_batch_term
 
     def forward(self, query_embeddings, doc_embeddings, neg_doc_embeddings):
         """
         query_embeddings: (batch_size, num_query_tokens, dim)
         doc_embeddings: (batch_size, num_doc_tokens, dim)
+        neg_doc_embeddings: (batch_size, num_neg_doc_tokens, dim)
         """
 
-        # shift neg_doc_embeddings by 1
-        print(query_embeddings.shape, doc_embeddings.shape, neg_doc_embeddings.shape)
-
-        # print(query_embeddings[0])
-        # print(doc_embeddings[0])
-        # print(neg_doc_embeddings[0])
-
-
-        arr = torch.einsum("qd,sd->qs", query_embeddings[0], doc_embeddings[0])
-        # viz
-        import matplotlib.pyplot as plt
-        import random
-
-        print(arr)
-
-        r = random.randint(0,1000)
-        plt.imsave(f"save_{r}.png", arr.detach().float().cpu().numpy())
-
-        arr2 = torch.einsum("qd,sd->qs", query_embeddings[0], neg_doc_embeddings[0])
-        print(arr2)
-        plt.imsave(f"save_{r}_neg.png", arr2.detach().float().cpu().numpy())
-
-        # compute
         # Compute the ColBERT scores
         pos_scores = torch.einsum("bnd,bsd->bns", query_embeddings, doc_embeddings).max(dim=2)[0].sum(dim=1)
         neg_scores = torch.einsum("bnd,bsd->bns", query_embeddings, neg_doc_embeddings).max(dim=2)[0].sum(dim=1)
 
-        breakpoint()
-
-
-        print(pos_scores.shape, neg_scores.shape)
-
-        print(pos_scores)
-        print(neg_scores)
-
-        # Compute the loss
-        # The loss is computed as the negative log of the softmax of the positive scores
-        # relative to the negative scores.
-        # This can be simplified to log-sum-exp of negative scores minus the positive score
-        # for numerical stability.
-        # torch.vstack((pos_scores, neg_scores)).T.softmax(1)[:, 0].log()*(-1)
         loss = F.softplus(neg_scores - pos_scores).mean()
 
-        return loss
+        if self.in_batch_term:
+            scores = (
+                torch.einsum("bnd,csd->bcns", query_embeddings, doc_embeddings).max(dim=3)[0].sum(dim=2)
+            )  # (batch_size, batch_size)
+
+            # Positive scores are the diagonal of the scores matrix.
+            pos_scores = scores.diagonal()  # (batch_size,)
+            neg_scores = scores - torch.eye(scores.shape[0], device=scores.device) * 1e6  # (batch_size, batch_size)
+            neg_scores = neg_scores.max(dim=1)[0]  # (batch_size,)
+
+            loss += F.softplus(neg_scores - pos_scores).mean()
+
+        return loss/2
 
 
 class BiPairwiseCELoss(torch.nn.Module):
