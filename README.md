@@ -27,7 +27,7 @@ pip install git+https://github.com/illuin-tech/colpali
 ### From source
 ```bash
 git clone https://github.com/illuin-tech/colpali
-mv colpali
+cd colpali
 pip install -r requirements.txt
 ```
 
