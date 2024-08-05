@@ -1,0 +1,42 @@
+config:
+  (): colpali_engine.utils.train_colpali_engine_models.ColModelTrainingConfig
+  output_dir: !path ../../../models/train_colpali_hardneg_ib_3b-mix-448
+  processor:
+    () : colpali_engine.utils.wrapper.AutoProcessorWrapper
+    pretrained_model_name_or_path: "./models/paligemma-3b-mix-448"
+    max_length: 50
+  model:
+    (): colpali_engine.utils.wrapper.AutoColModelWrapper
+    pretrained_model_name_or_path: "./models/paligemma-3b-mix-448"
+    training_objective: "colbertv1"
+    # attn_implementation: "eager"
+    torch_dtype:  !ext torch.bfloat16
+#    device_map: "auto"
+#    quantization_config:
+#      (): transformers.BitsAndBytesConfig
+#      load_in_4bit: true
+#      bnb_4bit_quant_type: "nf4"
+#      bnb_4bit_compute_dtype:  "bfloat16"
+#      bnb_4bit_use_double_quant: true
+
+  dataset_loading_func: !ext colpali_engine.utils.dataset_transformation.load_train_set_ir_negs
+  eval_dataset_loader: !import ../data/test_data.yaml
+
+  max_length: 50
+  run_eval: true
+  add_suffix: true
+  loss_func:
+    (): colpali_engine.loss.colbert_loss.ColbertPairwiseNegativeCELoss
+    in_batch_term: true
+  tr_args: !import ../tr_args/default_neg_tr_args.yaml
+  peft_config:
+    (): peft.LoraConfig
+    r: 32
+    lora_alpha: 32
+    lora_dropout: 0.1
+    init_lora_weights: "gaussian"
+    bias: "none"
+    task_type: "FEATURE_EXTRACTION"
+    target_modules: '(.*(language_model).*(down_proj|gate_proj|up_proj|k_proj|q_proj|v_proj|o_proj).*$|.*(custom_text_proj).*$)'
+    # target_modules: '(.*(language_model).*(down_proj|gate_proj|up_proj|k_proj|q_proj|v_proj|o_proj).*$|.*(custom_text_proj).*$)'
+
