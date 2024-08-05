@@ -28,7 +28,7 @@ class HardNegCollator(CustomCollator):
         for example in tmp_examples:
             pos_image = self.get_image_from_image_dataset(example["gold_index"])
             pos_query = example["query"]
-            neg_images_ids = examples["negs"][:1]
+            neg_images_ids = example["negs"][:1]
             neg_images = [self.get_image_from_image_dataset(image_idx) for image_idx in neg_images_ids]
 
             examples += [{"image": pos_image, "query": pos_query, "neg_image": neg_images[0]}]
