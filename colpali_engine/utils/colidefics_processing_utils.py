@@ -1,5 +1,6 @@
 # Utils for processing images and queries for ColPaLi
 
+
 def process_images(processor, images, max_length: int = 50):
     texts_doc = []
     images = [image.convert("RGB") for image in images]

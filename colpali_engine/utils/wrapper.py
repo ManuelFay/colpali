@@ -1,22 +1,17 @@
 import importlib
 
 from colpali_engine.models.clip_baselines import ColSigLIP, SigLIP
-from colpali_engine.models.colbert_architectures import (
-    BiBERT,
-    BiXLMRoBERTa,
-    ColBERT,
-    ColCamembert,
-    ColLlama,
-    ColXLMRoBERTa,
-)
-from colpali_engine.models.idefics_colbert_architecture import BiIdefics, ColIdefics
-from colpali_engine.models.paligemma_colbert_architecture import (
-    BiNewSiglip,
-    BiPaliLast,
-    BiPaliMean,
-    ColNewSiglip,
-    ColPali,
-)
+from colpali_engine.models.colbert_architectures import (BiBERT, BiXLMRoBERTa,
+                                                         ColBERT, ColCamembert,
+                                                         ColLlama,
+                                                         ColXLMRoBERTa)
+from colpali_engine.models.idefics_colbert_architecture import (BiIdefics,
+                                                                ColIdefics)
+from colpali_engine.models.paligemma_colbert_architecture import (BiNewSiglip,
+                                                                  BiPaliLast,
+                                                                  BiPaliMean,
+                                                                  ColNewSiglip,
+                                                                  ColPali)
 
 if importlib.util.find_spec("transformers") is not None:
     from transformers import AutoProcessor, AutoTokenizer

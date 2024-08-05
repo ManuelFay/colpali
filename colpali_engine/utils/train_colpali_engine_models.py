@@ -9,12 +9,17 @@ from datasets import concatenate_datasets
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import AutoTokenizer, Idefics2Processor, PreTrainedModel, PreTrainedTokenizer, TrainingArguments
+from transformers import (AutoTokenizer, Idefics2Processor, PreTrainedModel,
+                          PreTrainedTokenizer, TrainingArguments)
 
 from colpali_engine.dataset.custom_collator import CustomCollator
 from colpali_engine.dataset.hard_neg_collator import HardNegCollator
-from colpali_engine.loss.colbert_loss import BiEncoderLoss, BiPairwiseCELoss, ColbertLoss, ColbertPairwiseCELoss, ColbertPairwiseNegativeCELoss
-from colpali_engine.trainer.contrastive_trainer import ContrastiveTrainer, ContrastiveNegativeTrainer
+from colpali_engine.loss.colbert_loss import (BiEncoderLoss, BiPairwiseCELoss,
+                                              ColbertLoss,
+                                              ColbertPairwiseCELoss,
+                                              ColbertPairwiseNegativeCELoss)
+from colpali_engine.trainer.contrastive_trainer import (
+    ContrastiveNegativeTrainer, ContrastiveTrainer)
 from colpali_engine.trainer.retrieval_evaluator import CustomEvaluator
 from colpali_engine.utils.gpu_stats import print_gpu_utilization, print_summary
 
@@ -95,13 +100,11 @@ class ColModelTraining:
                 processor=self.config.processor,
                 tokenizer=self.config.tokenizer,
                 max_length=self.config.max_length,
-                image_dataset=neg_dataset
+                image_dataset=neg_dataset,
             )
         else:
             self.collator = CustomCollator(
-                processor=self.config.processor,
-                tokenizer=self.config.tokenizer,
-                max_length=self.config.max_length
+                processor=self.config.processor, tokenizer=self.config.tokenizer, max_length=self.config.max_length
             )
         self.current_git_hash = os.popen("git rev-parse HEAD").read().strip()
         self.retriever_evaluator = CustomEvaluator(
@@ -248,9 +251,7 @@ class ColModelTraining:
 
         # switching to normal collator
         self.collator = CustomCollator(
-            processor=self.config.processor,
-            tokenizer=self.config.tokenizer,
-            max_length=self.config.max_length
+            processor=self.config.processor, tokenizer=self.config.tokenizer, max_length=self.config.max_length
         )
         if self.config.eval_dataset_loader is not None:
             for test_name, test_dataset_loading_func in self.config.eval_dataset_loader.items():

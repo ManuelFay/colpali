@@ -11,7 +11,8 @@ from tqdm import trange
 
 from colpali_engine.interpretability.plot_utils import plot_patches
 from colpali_engine.interpretability.processor import ColPaliProcessor
-from colpali_engine.interpretability.torch_utils import normalize_attention_map_per_query_token
+from colpali_engine.interpretability.torch_utils import \
+    normalize_attention_map_per_query_token
 from colpali_engine.interpretability.vit_configs import VIT_CONFIG
 from colpali_engine.models.paligemma_colbert_architecture import ColPali
 

@@ -126,7 +126,7 @@ class ColbertPairwiseNegativeCELoss(torch.nn.Module):
 
             loss += F.softplus(neg_scores - pos_scores).mean()
 
-        return loss/2
+        return loss / 2
 
 
 class BiPairwiseCELoss(torch.nn.Module):

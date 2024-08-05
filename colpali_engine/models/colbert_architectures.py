@@ -1,14 +1,8 @@
 from torch import nn
-from transformers import (
-    BertModel,
-    BertPreTrainedModel,
-    CamembertModel,
-    CamembertPreTrainedModel,
-    LlamaModel,
-    LlamaPreTrainedModel,
-    XLMRobertaModel,
-    XLMRobertaPreTrainedModel,
-)
+from transformers import (BertModel, BertPreTrainedModel, CamembertModel,
+                          CamembertPreTrainedModel, LlamaModel,
+                          LlamaPreTrainedModel, XLMRobertaModel,
+                          XLMRobertaPreTrainedModel)
 
 
 class ColCamembert(CamembertPreTrainedModel):

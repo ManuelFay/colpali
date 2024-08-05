@@ -1,6 +1,7 @@
 import torch
 from torch import nn
-from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration, PaliGemmaPreTrainedModel
+from transformers.models.paligemma.modeling_paligemma import (
+    PaliGemmaForConditionalGeneration, PaliGemmaPreTrainedModel)
 
 
 class BiPaliLast(PaliGemmaPreTrainedModel):
