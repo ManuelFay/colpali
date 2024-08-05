@@ -16,8 +16,11 @@ class HardNegCollator(CustomCollator):
         self.image_dataset = image_dataset
         assert self.image_dataset is not None, "image_dataset must be provided"
 
-    def get_image_from_image_dataset(self, image_idx):
-        return self.image_dataset[int(image_idx)]['image']
+    def get_image_from_docid(self, docid):
+        example_idx, image_idx = docid.split('_')
+        target_image = self.image_dataset[int(example_idx)]['images'][int(image_idx)]
+        return target_image
+
 
     def __call__(self, examples):
         # assert len(examples) == 1, "HardNegCollator only supports a single example at at time"
@@ -25,14 +28,15 @@ class HardNegCollator(CustomCollator):
         tmp_examples = examples
         examples = []
         for example in tmp_examples:
-            pos_image = self.get_image_from_image_dataset(example['gold_index'])
+            pos_image = self.get_image_from_docid(example['positive_passages'][0]['docid'])
             pos_query = example['query']
-            neg_images_ids = examples['negs'][:1]
-            neg_images = [self.get_image_from_image_dataset(image_idx) for image_idx in neg_images_ids]
+            neg_images_ids = [doc["docid"] for doc in example['negative_passages'][:1]]
+            neg_images = [self.get_image_from_docid(docid) for docid in neg_images_ids]
 
             examples += [
                 {"image": pos_image, "query": pos_query, "neg_image": neg_images[0]}
             ]
+
         # reorder examples
         if self.processor is None:
             return self.forward_text(examples)
