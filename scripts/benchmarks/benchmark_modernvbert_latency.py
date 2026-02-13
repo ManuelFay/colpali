@@ -190,6 +190,63 @@ def _scenario_model_only_cached_preprocessed(
             _ = model(**batch)
 
 
+def _extract_real_pixel_values(pixel_values: torch.Tensor) -> torch.Tensor:
+    batch_size, num_images, _, _, _ = pixel_values.shape
+    pixel_values = pixel_values.view(batch_size * num_images, *pixel_values.shape[2:])
+    nb_values_per_image = pixel_values.shape[1:].numel()
+    real_images_inds = (pixel_values == 0.0).sum(dim=(-1, -2, -3)) != nb_values_per_image
+    if not any(real_images_inds):
+        real_images_inds[0] = True
+    return pixel_values[real_images_inds].contiguous()
+
+
+def _scenario_vision_only_cached_preprocessed(
+    preprocessed: Sequence[dict],
+    model: ColModernVBert,
+) -> None:
+    core_model = model.model
+    with torch.no_grad():
+        for batch in preprocessed:
+            pixel_values = _extract_real_pixel_values(batch["pixel_values"])
+            image_hidden_states = core_model.vision_model(pixel_values=pixel_values).last_hidden_state
+            _ = core_model.connector(image_hidden_states)
+
+
+def _build_image_hidden_state_cache(
+    preprocessed: Sequence[dict],
+    model: ColModernVBert,
+) -> List[torch.Tensor]:
+    core_model = model.model
+    cache: List[torch.Tensor] = []
+    with torch.no_grad():
+        for batch in preprocessed:
+            pixel_values = _extract_real_pixel_values(batch["pixel_values"])
+            image_hidden_states = core_model.vision_model(pixel_values=pixel_values).last_hidden_state
+            cache.append(core_model.connector(image_hidden_states))
+    return cache
+
+
+def _scenario_text_only_cached_preprocessed(
+    preprocessed: Sequence[dict],
+    image_hidden_states_cache: Sequence[torch.Tensor],
+    model: ColModernVBert,
+) -> None:
+    core_model = model.model
+    with torch.no_grad():
+        for batch, image_hidden_states in zip(preprocessed, image_hidden_states_cache):
+            input_ids = batch["input_ids"]
+            inputs_embeds = core_model.text_model.get_input_embeddings()(input_ids).to(input_ids.device)
+            inputs_embeds = core_model.inputs_merger(input_ids, inputs_embeds, image_hidden_states)
+            _ = core_model.text_model(
+                inputs_embeds=inputs_embeds,
+                attention_mask=batch.get("attention_mask"),
+                position_ids=batch.get("position_ids"),
+                output_attentions=False,
+                output_hidden_states=False,
+                return_dict=False,
+            )
+
+
 def _render_markdown(results: Sequence[ScenarioResult], args: argparse.Namespace, device_name: str) -> str:
     header = [
         "# ModernVBERT latency benchmark report",
@@ -234,6 +291,8 @@ def main() -> None:
             "processor_only_sequential",
             "processor_only_batched",
             "model_only_preprocessed",
+            "vision_only_preprocessed",
+            "text_only_preprocessed",
         ],
         help="Comma-separated scenario names.",
     )
@@ -267,11 +326,14 @@ def main() -> None:
 
         # Cache for model-only scenario to avoid recomputing processor cost in timing loop.
         model_only_cache: Dict[int, List[dict]] = {}
+        vision_text_cache: Dict[int, Tuple[List[dict], List[torch.Tensor]]] = {}
         for batch_size in args.batch_sizes:
             if batch_size > args.num_docs:
                 continue
             chunks = _iter_chunks(images, batch_size)
             model_only_cache[batch_size] = [processor.process_images(chunk).to(device) for chunk in chunks]
+            image_hidden_states_cache = _build_image_hidden_state_cache(model_only_cache[batch_size], model)
+            vision_text_cache[batch_size] = (model_only_cache[batch_size], image_hidden_states_cache)
 
         # Batch-size independent scenarios (run once per image mode)
         invariant: List[Tuple[str, int, Callable[[], None]]] = [
@@ -322,6 +384,16 @@ def main() -> None:
                 (
                     "model_only_preprocessed",
                     lambda cached=model_only_cache[batch_size]: _scenario_model_only_cached_preprocessed(cached, model),
+                ),
+                (
+                    "vision_only_preprocessed",
+                    lambda cached=model_only_cache[batch_size]: _scenario_vision_only_cached_preprocessed(cached, model),
+                ),
+                (
+                    "text_only_preprocessed",
+                    lambda cached=vision_text_cache[batch_size][0], ihs=vision_text_cache[batch_size][1]: _scenario_text_only_cached_preprocessed(
+                        cached, ihs, model
+                    ),
                 ),
             ]
 

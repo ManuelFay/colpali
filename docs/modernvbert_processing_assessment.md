@@ -120,3 +120,25 @@ python scripts/benchmarks/benchmark_modernvbert_latency.py \
   --repeats 8 \
   --output-dir benchmark_reports/full_before
 ```
+
+
+### Vision vs text (LLM) latency breakdown
+
+The benchmark now supports two additional scenarios:
+
+- `vision_only_preprocessed`: vision encoder + connector only (no text model)
+- `text_only_preprocessed`: text model only, using cached image hidden states
+
+Recommended command:
+
+```bash
+python scripts/benchmarks/benchmark_modernvbert_latency.py \
+  --device cuda \
+  --num-docs 64 \
+  --batch-sizes 1,2,4,8,16 \
+  --image-size-modes uniform,mixed \
+  --warmup 2 \
+  --repeats 8 \
+  --scenarios model_only_preprocessed,vision_only_preprocessed,text_only_preprocessed,batched_end_to_end,processor_only_batched \
+  --output-dir benchmark_reports/breakdown
+```
