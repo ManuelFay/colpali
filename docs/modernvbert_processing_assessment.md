@@ -233,3 +233,47 @@ Interpretation:
 - `inputs_merger_only_preprocessed`: merge cost only (without text transformer forward).
 - `text_model_only_preprocessed`: text transformer forward over pre-merged embeddings.
 - `text_only_preprocessed`: merge + text transformer combined.
+
+### Consolidated findings from shared runs so far
+
+Based on the timing outputs shared so far, the bottleneck pattern is now consistent across setups:
+
+1. **LM/text is not the dominant cost in your workload**.
+2. **Vision path + preprocessing dominate end-to-end latency**.
+3. **Naive CPU threading of `process_images` has little to no impact**.
+4. **Splitting vision on GPU and text on CPU is a regression** (transfer + CPU compute overhead).
+5. **Pure SigLIP image embedding is fast in isolation**, which confirms overhead is mostly in multimodal/document pipeline expansion rather than raw SigLIP kernel speed.
+
+#### L4 ModernVBERT breakdown (uniform mode, representative values from shared logs)
+
+- `batched_end_to_end` ≈ **12.3–12.9s** for 16 docs (about **1.24–1.30 docs/s**).
+- `processor_only_batched` ≈ **5.3–5.6s**.
+- `model_only_preprocessed` ≈ **6.9–7.5s**.
+- `vision_only_preprocessed` ≈ **6.2–6.7s**.
+- `text_only_preprocessed` ≈ **0.69–0.75s**.
+- `processor_only_batched_threaded` ≈ `processor_only_batched` (negligible delta).
+- `split_vision_gpu_text_cpu_preprocessed` ≈ **16.2–19.2s** (worse than `model_only_preprocessed`).
+
+Interpretation from those values:
+
+- The model-side split is roughly **vision-dominated** (vision path is most of model-only time).
+- Within the text side, the total text path is relatively small compared to vision and preprocessing.
+- End-to-end optimizations should focus on **preprocessing + vision-token budget + batching quality**, not CPU-offloading the text model.
+
+#### SigLIP-only benchmark (shared run)
+
+For `google/siglip2-base-patch16-512` at 64 images, size 1024:
+
+- Sequential (`batch=1`): **~2.03s**, **~31.6 images/s**.
+- Batched (`batch=4`): **~1.92s**, **~33.3 images/s**.
+- Batched (`batch=8`): **~2.00s**, **~32.0 images/s**.
+- Batched (`batch=16`): **~2.05s**, **~31.2 images/s**.
+
+This confirms raw SigLIP throughput on L4 is healthy; the larger ModernVBERT latency is caused by additional pipeline work (document preprocessing/splitting, connector + multimodal merge, and full multimodal forward behavior), not by an unexpectedly slow standalone SigLIP encoder.
+
+#### Updated optimization priority (from evidence so far)
+
+1. Keep building **component-level decomposition** (`connector_only`, `inputs_merger_only`, `text_model_only`) to verify your `inputs_merger` hypothesis quantitatively per batch/mode.
+2. Reduce preprocessing burden with **process-based** parallel data loading/prefetch (threads alone are not enough).
+3. Reduce vision token pressure by tuning resize/splitting/token budget and batching by similar token budgets.
+4. Maintain text on GPU in normal path (CPU split has been consistently slower in your measurements).
