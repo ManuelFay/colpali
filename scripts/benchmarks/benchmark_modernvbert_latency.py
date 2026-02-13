@@ -31,7 +31,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from colpali_engine.models import ColModernVBert, ColModernVBertProcessor
-from colpali_engine.utils.transformers_wrappers import AutoProcessorWrapper
+from transformers import AutoConfig, AutoImageProcessor, AutoProcessor, AutoTokenizer
 
 
 @dataclass
@@ -56,27 +56,68 @@ def _parse_int_list(raw: str) -> List[int]:
 def _load_modernvbert_processor(model_name: str) -> ColModernVBertProcessor:
     try:
         return ColModernVBertProcessor.from_pretrained(model_name)
-    except TypeError as exc:
+    except TypeError:
         # Some transformers/runtime combinations fail to route args into Idefics3Processor-based
-        # custom processors. Fallback: load generic AutoProcessor and re-wrap into ColModernVBertProcessor.
-        auto_processor = AutoProcessorWrapper(model_name)
+        # custom processors. Fallback to reconstructing from generic components.
+        pass
 
-        image_processor = getattr(auto_processor, "image_processor", None)
-        tokenizer = getattr(auto_processor, "tokenizer", None)
-        if image_processor is None or tokenizer is None:
+    auto_processor = None
+    try:
+        auto_processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+    except Exception:
+        auto_processor = None
+
+    image_processor = getattr(auto_processor, "image_processor", None) if auto_processor is not None else None
+    tokenizer = getattr(auto_processor, "tokenizer", None) if auto_processor is not None else None
+    image_seq_len = getattr(auto_processor, "image_seq_len", None) if auto_processor is not None else None
+
+    cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+    vision_cfg = getattr(cfg, "vision_config", None)
+    text_cfg = getattr(cfg, "text_config", None)
+    vision_model_name = (
+        getattr(vision_cfg, "vision_model_name", None)
+        if vision_cfg is not None
+        else None
+    )
+    text_model_name = (
+        getattr(text_cfg, "text_model_name", None)
+        if text_cfg is not None
+        else None
+    )
+    if vision_model_name is None and isinstance(vision_cfg, dict):
+        vision_model_name = vision_cfg.get("vision_model_name")
+    if text_model_name is None and isinstance(text_cfg, dict):
+        text_model_name = text_cfg.get("text_model_name")
+
+    if image_processor is None:
+        if vision_model_name is None:
             raise RuntimeError(
-                "Failed to construct ColModernVBertProcessor fallback: AutoProcessor is missing "
-                "image_processor/tokenizer components."
-            ) from exc
+                "Failed to construct ColModernVBertProcessor fallback: missing image_processor and "
+                "could not infer vision_model_name from config."
+            )
+        image_processor = AutoImageProcessor.from_pretrained(vision_model_name, trust_remote_code=True)
 
-        image_seq_len = getattr(auto_processor, "image_seq_len", 64)
-        chat_template = getattr(tokenizer, "chat_template", None)
-        return ColModernVBertProcessor(
-            image_processor=image_processor,
-            tokenizer=tokenizer,
-            image_seq_len=image_seq_len,
-            chat_template=chat_template,
-        )
+    if tokenizer is None:
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+        except Exception:
+            if text_model_name is None:
+                raise RuntimeError(
+                    "Failed to construct ColModernVBertProcessor fallback: missing tokenizer and "
+                    "could not infer text_model_name from config."
+                )
+            tokenizer = AutoTokenizer.from_pretrained(text_model_name, trust_remote_code=True)
+
+    if image_seq_len is None:
+        image_seq_len = 64
+
+    chat_template = getattr(tokenizer, "chat_template", None)
+    return ColModernVBertProcessor(
+        image_processor=image_processor,
+        tokenizer=tokenizer,
+        image_seq_len=image_seq_len,
+        chat_template=chat_template,
+    )
 
 def _seed_everything(seed: int) -> None:
     random.seed(seed)
