@@ -277,3 +277,29 @@ This confirms raw SigLIP throughput on L4 is healthy; the larger ModernVBERT lat
 2. Reduce preprocessing burden with **process-based** parallel data loading/prefetch (threads alone are not enough).
 3. Reduce vision token pressure by tuning resize/splitting/token budget and batching by similar token budgets.
 4. Maintain text on GPU in normal path (CPU split has been consistently slower in your measurements).
+
+
+### Asynchronous preprocessing with DataLoader workers
+
+To test asynchronous image preprocessing so GPU compute is less blocked by CPU preprocessing, use the new scenario:
+
+```bash
+python scripts/benchmarks/benchmark_modernvbert_latency.py \
+  --device cuda \
+  --num-docs 64 \
+  --batch-sizes 1,4,8,16 \
+  --image-size-modes uniform,mixed \
+  --warmup 2 \
+  --repeats 8 \
+  --pin-memory \
+  --non-blocking \
+  --dataloader-workers 4 \
+  --prefetch-factor 2 \
+  --scenarios batched_end_to_end,batched_end_to_end_dataloader,processor_only_batched,model_only_preprocessed \
+  --output-dir benchmark_reports/dataloader_async
+```
+
+Interpretation:
+
+- `batched_end_to_end_dataloader` faster than `batched_end_to_end` indicates asynchronous preprocessing overlap is helping.
+- If gains are small, bottleneck is likely still in vision compute/token expansion rather than CPU-side preprocessing.

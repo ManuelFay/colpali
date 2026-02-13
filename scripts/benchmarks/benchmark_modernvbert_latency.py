@@ -16,15 +16,17 @@ import statistics
 import sys
 import time
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Dict, List, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import torch
 from PIL import Image
+from torch.utils.data import DataLoader
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -47,13 +49,17 @@ class ScenarioResult:
     throughput_docs_per_s: float
 
 
+_DATALOADER_PROCESSOR: Optional[ColModernVBertProcessor] = None
+_DATALOADER_MODEL_NAME: Optional[str] = None
+
+
 def _parse_int_list(raw: str) -> List[int]:
     return [int(x.strip()) for x in raw.split(",") if x.strip()]
 
 
 
 
-def _load_modernvbert_processor(model_name: str, model: ColModernVBert) -> ColModernVBertProcessor:
+def _load_modernvbert_processor(model_name: str, model: Optional[ColModernVBert]) -> ColModernVBertProcessor:
     """Construct processor from the checkpoint directly, using loaded model config as backup."""
     image_processor = None
     tokenizer = None
@@ -71,6 +77,8 @@ def _load_modernvbert_processor(model_name: str, model: ColModernVBert) -> ColMo
 
     # Backup: derive base model names from loaded model config.
     if image_processor is None or tokenizer is None:
+        if model is None:
+            raise RuntimeError("Could not load processor components from checkpoint and no model provided for fallback.")
         cfg = model.config
         vision_cfg = getattr(cfg, "vision_config", None)
         text_cfg = getattr(cfg, "text_config", None)
@@ -199,6 +207,56 @@ def _move_batch_to_device(
         else:
             moved[key] = value
     return moved
+
+
+def _init_dataloader_worker(_worker_id: int, model_name: str) -> None:
+    global _DATALOADER_MODEL_NAME, _DATALOADER_PROCESSOR
+    _DATALOADER_MODEL_NAME = model_name
+    _DATALOADER_PROCESSOR = None
+
+
+def _collate_preprocess_images(images: List[Image.Image]) -> dict:
+    global _DATALOADER_MODEL_NAME, _DATALOADER_PROCESSOR
+    if _DATALOADER_PROCESSOR is None:
+        if _DATALOADER_MODEL_NAME is None:
+            raise RuntimeError("Dataloader worker is missing model name for processor initialization.")
+        # model argument not needed when loading from checkpoint succeeds (common case).
+        _DATALOADER_PROCESSOR = _load_modernvbert_processor(_DATALOADER_MODEL_NAME, model=None)  # type: ignore[arg-type]
+    return _DATALOADER_PROCESSOR.process_images(images)
+
+
+def _scenario_batched_end_to_end_dataloader(
+    images: Sequence[Image.Image],
+    model_name: str,
+    model: ColModernVBert,
+    device: torch.device,
+    batch_size: int,
+    *,
+    dataloader_workers: int,
+    prefetch_factor: int,
+    non_blocking: bool = False,
+    pin_memory: bool = False,
+) -> None:
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": False,
+        "num_workers": dataloader_workers,
+        "pin_memory": pin_memory,
+        "collate_fn": _collate_preprocess_images,
+    }
+    if dataloader_workers > 0:
+        loader_kwargs["worker_init_fn"] = partial(_init_dataloader_worker, model_name=model_name)
+        loader_kwargs["persistent_workers"] = True
+        loader_kwargs["prefetch_factor"] = max(1, prefetch_factor)
+
+    # Ensure the main process can also collate when workers=0
+    _init_dataloader_worker(0, model_name)
+    loader = DataLoader(list(images), **loader_kwargs)
+
+    with torch.no_grad():
+        for batch_cpu in loader:
+            batch = _move_batch_to_device(batch_cpu, device, non_blocking=non_blocking, pin_memory=pin_memory)
+            _ = model(**batch)
 
 
 def _scenario_sequential_end_to_end(
@@ -559,6 +617,7 @@ def main() -> None:
         default=[
             "sequential_end_to_end",
             "batched_end_to_end",
+            "batched_end_to_end_dataloader",
             "processor_only_sequential",
             "processor_only_batched",
             "model_only_preprocessed",
@@ -576,6 +635,8 @@ def main() -> None:
     parser.add_argument("--processor-threads", type=int, default=1, help="Threads for threaded processor hypothesis.")
     parser.add_argument("--pin-memory", action="store_true", help="Pin CPU tensors before H2D copy.")
     parser.add_argument("--non-blocking", action="store_true", help="Use non_blocking tensor transfer.")
+    parser.add_argument("--dataloader-workers", type=int, default=4, help="Workers for DataLoader preprocessing scenario.")
+    parser.add_argument("--prefetch-factor", type=int, default=2, help="Prefetch factor for DataLoader workers.")
     parser.add_argument("--output-dir", default="benchmark_reports")
     args = parser.parse_args()
 
@@ -594,7 +655,7 @@ def main() -> None:
         f"Loaded model={args.model_name} on device={device_name}. "
         f"num_docs={args.num_docs}, modes={args.image_size_modes}, batch_sizes={args.batch_sizes}, "
         f"warmup={args.warmup}, repeats={args.repeats}, threads={args.processor_threads}, "
-        f"pin_memory={args.pin_memory}, non_blocking={args.non_blocking}"
+        f"pin_memory={args.pin_memory}, non_blocking={args.non_blocking}, dataloader_workers={args.dataloader_workers}"
     )
 
     results: List[ScenarioResult] = []
@@ -666,6 +727,20 @@ def main() -> None:
                 (
                     "batched_end_to_end",
                     lambda images=images, b=batch_size: _scenario_batched_end_to_end(images, processor, model, device, b, non_blocking=args.non_blocking, pin_memory=args.pin_memory),
+                ),
+                (
+                    "batched_end_to_end_dataloader",
+                    lambda images=images, b=batch_size: _scenario_batched_end_to_end_dataloader(
+                        images,
+                        args.model_name,
+                        model,
+                        device,
+                        b,
+                        dataloader_workers=args.dataloader_workers,
+                        prefetch_factor=args.prefetch_factor,
+                        non_blocking=args.non_blocking,
+                        pin_memory=args.pin_memory,
+                    ),
                 ),
                 (
                     "processor_only_batched",
