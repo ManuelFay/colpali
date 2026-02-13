@@ -15,6 +15,9 @@ from typing import Dict, List, Sequence
 
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("TRANSFORMERS_NO_FLAX", "1")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 import torch
 from PIL import Image
@@ -98,7 +101,7 @@ def _run_sequential(images: Sequence[Image.Image], processor, model, device: tor
         for image in images:
             batch = processor(images=[image], return_tensors="pt")
             pixel_values = batch["pixel_values"].to(device, non_blocking=True)
-            _ = model(pixel_values=pixel_values)
+            _ = model.get_image_features(pixel_values=pixel_values)
 
 
 def _run_batched(images: Sequence[Image.Image], batch_size: int, processor, model, device: torch.device) -> None:
@@ -106,7 +109,7 @@ def _run_batched(images: Sequence[Image.Image], batch_size: int, processor, mode
         for chunk in _iter_chunks(images, batch_size):
             batch = processor(images=chunk, return_tensors="pt")
             pixel_values = batch["pixel_values"].to(device, non_blocking=True)
-            _ = model(pixel_values=pixel_values)
+            _ = model.get_image_features(pixel_values=pixel_values)
 
 
 def _render_markdown(results: Sequence[BenchmarkResult], args: argparse.Namespace, device_name: str) -> str:
@@ -152,7 +155,11 @@ def main() -> None:
         raise RuntimeError("CUDA requested but is not available.")
 
     _seed_everything(args.seed)
-    processor = AutoImageProcessor.from_pretrained(args.vision_model_name, trust_remote_code=True)
+    processor = AutoImageProcessor.from_pretrained(
+        args.vision_model_name,
+        trust_remote_code=True,
+        use_fast=True,
+    )
     model = AutoModel.from_pretrained(args.vision_model_name, trust_remote_code=True).to(device).eval()
     device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
 
