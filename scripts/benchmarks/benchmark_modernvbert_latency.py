@@ -8,6 +8,7 @@ It generates JSON and Markdown reports for easy comparison.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import random
@@ -16,6 +17,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Sequence, Tuple
 
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
@@ -129,6 +131,25 @@ def _iter_chunks(xs: Sequence[Image.Image], batch_size: int) -> List[List[Image.
     return [list(xs[i : i + batch_size]) for i in range(0, len(xs), batch_size)]
 
 
+def _move_batch_to_device(
+    batch: dict,
+    device: torch.device,
+    *,
+    non_blocking: bool = False,
+    pin_memory: bool = False,
+) -> dict:
+    moved = {}
+    for key, value in batch.items():
+        if torch.is_tensor(value):
+            tensor = value
+            if pin_memory and tensor.device.type == "cpu":
+                tensor = tensor.pin_memory()
+            moved[key] = tensor.to(device, non_blocking=non_blocking)
+        else:
+            moved[key] = value
+    return moved
+
+
 def _scenario_sequential_end_to_end(
     images: Sequence[Image.Image],
     processor: ColModernVBertProcessor,
@@ -147,10 +168,14 @@ def _scenario_batched_end_to_end(
     model: ColModernVBert,
     device: torch.device,
     batch_size: int,
+    *,
+    non_blocking: bool = False,
+    pin_memory: bool = False,
 ) -> None:
     with torch.no_grad():
         for chunk in _iter_chunks(images, batch_size):
-            batch = processor.process_images(chunk).to(device)
+            batch_cpu = processor.process_images(chunk)
+            batch = _move_batch_to_device(batch_cpu, device, non_blocking=non_blocking, pin_memory=pin_memory)
             _ = model(**batch)
 
 
@@ -166,6 +191,25 @@ def _scenario_processor_only_batched(
 ) -> None:
     for chunk in _iter_chunks(images, batch_size):
         _ = processor.process_images(chunk)
+
+
+def _scenario_processor_only_batched_threaded(
+    images: Sequence[Image.Image],
+    processor: ColModernVBertProcessor,
+    batch_size: int,
+    num_threads: int,
+) -> None:
+    chunks = _iter_chunks(images, batch_size)
+    if num_threads <= 1:
+        for chunk in chunks:
+            _ = processor.process_images(chunk)
+        return
+
+    def _process(chunk: List[Image.Image]) -> None:
+        _ = processor.process_images(chunk)
+
+    with ThreadPoolExecutor(max_workers=num_threads) as pool:
+        list(pool.map(_process, chunks))
 
 
 def _scenario_model_only_from_preprocessed(
@@ -247,6 +291,37 @@ def _scenario_text_only_cached_preprocessed(
             )
 
 
+def _scenario_split_vision_gpu_text_cpu_preprocessed(
+    preprocessed: Sequence[dict],
+    model: ColModernVBert,
+    text_model_cpu: torch.nn.Module,
+) -> None:
+    core_model = model.model
+    with torch.no_grad():
+        for batch in preprocessed:
+            pixel_values = _extract_real_pixel_values(batch["pixel_values"])
+            pixel_values = pixel_values.to(next(core_model.vision_model.parameters()).device)
+            image_hidden_states = core_model.vision_model(pixel_values=pixel_values).last_hidden_state
+            image_hidden_states = core_model.connector(image_hidden_states).to("cpu")
+
+            input_ids = batch["input_ids"].to("cpu")
+            attention_mask = batch.get("attention_mask")
+            attention_mask = attention_mask.to("cpu") if attention_mask is not None else None
+            position_ids = batch.get("position_ids")
+            position_ids = position_ids.to("cpu") if position_ids is not None else None
+
+            inputs_embeds = text_model_cpu.get_input_embeddings()(input_ids)
+            inputs_embeds = core_model.inputs_merger(input_ids, inputs_embeds, image_hidden_states)
+            _ = text_model_cpu(
+                inputs_embeds=inputs_embeds,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                output_attentions=False,
+                output_hidden_states=False,
+                return_dict=False,
+            )
+
+
 def _render_markdown(results: Sequence[ScenarioResult], args: argparse.Namespace, device_name: str) -> str:
     header = [
         "# ModernVBERT latency benchmark report",
@@ -293,10 +368,15 @@ def main() -> None:
             "model_only_preprocessed",
             "vision_only_preprocessed",
             "text_only_preprocessed",
+            "processor_only_batched_threaded",
+            "split_vision_gpu_text_cpu_preprocessed",
         ],
         help="Comma-separated scenario names.",
     )
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--processor-threads", type=int, default=1, help="Threads for threaded processor hypothesis.")
+    parser.add_argument("--pin-memory", action="store_true", help="Pin CPU tensors before H2D copy.")
+    parser.add_argument("--non-blocking", action="store_true", help="Use non_blocking tensor transfer.")
     parser.add_argument("--output-dir", default="benchmark_reports")
     args = parser.parse_args()
 
@@ -314,12 +394,16 @@ def main() -> None:
     print(
         f"Loaded model={args.model_name} on device={device_name}. "
         f"num_docs={args.num_docs}, modes={args.image_size_modes}, batch_sizes={args.batch_sizes}, "
-        f"warmup={args.warmup}, repeats={args.repeats}"
+        f"warmup={args.warmup}, repeats={args.repeats}, threads={args.processor_threads}, "
+        f"pin_memory={args.pin_memory}, non_blocking={args.non_blocking}"
     )
 
     results: List[ScenarioResult] = []
 
     selected = set(args.scenarios)
+    text_model_cpu = None
+    if "split_vision_gpu_text_cpu_preprocessed" in selected:
+        text_model_cpu = copy.deepcopy(model.model.text_model).to("cpu").eval()
 
     for mode in args.image_size_modes:
         images = _make_images(args.num_docs, mode)
@@ -375,11 +459,17 @@ def main() -> None:
             variant: List[Tuple[str, Callable[[], None]]] = [
                 (
                     "batched_end_to_end",
-                    lambda images=images, b=batch_size: _scenario_batched_end_to_end(images, processor, model, device, b),
+                    lambda images=images, b=batch_size: _scenario_batched_end_to_end(images, processor, model, device, b, non_blocking=args.non_blocking, pin_memory=args.pin_memory),
                 ),
                 (
                     "processor_only_batched",
                     lambda images=images, b=batch_size: _scenario_processor_only_batched(images, processor, b),
+                ),
+                (
+                    "processor_only_batched_threaded",
+                    lambda images=images, b=batch_size: _scenario_processor_only_batched_threaded(
+                        images, processor, b, args.processor_threads
+                    ),
                 ),
                 (
                     "model_only_preprocessed",
@@ -393,6 +483,12 @@ def main() -> None:
                     "text_only_preprocessed",
                     lambda cached=vision_text_cache[batch_size][0], ihs=vision_text_cache[batch_size][1]: _scenario_text_only_cached_preprocessed(
                         cached, ihs, model
+                    ),
+                ),
+                (
+                    "split_vision_gpu_text_cpu_preprocessed",
+                    lambda cached=model_only_cache[batch_size], tm=text_model_cpu: _scenario_split_vision_gpu_text_cpu_preprocessed(
+                        cached, model, tm
                     ),
                 ),
             ]

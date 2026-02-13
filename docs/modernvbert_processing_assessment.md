@@ -142,3 +142,29 @@ python scripts/benchmarks/benchmark_modernvbert_latency.py \
   --scenarios model_only_preprocessed,vision_only_preprocessed,text_only_preprocessed,batched_end_to_end,processor_only_batched \
   --output-dir benchmark_reports/breakdown
 ```
+
+
+### Memory-IO reduction hypotheses (CPU preprocess + split execution)
+
+To test the hypothesis that memory transfers and CPU preprocessing are limiting throughput, run:
+
+```bash
+python scripts/benchmarks/benchmark_modernvbert_latency.py \
+  --device cuda \
+  --num-docs 64 \
+  --batch-sizes 1,2,4,8,16 \
+  --image-size-modes uniform,mixed \
+  --warmup 2 \
+  --repeats 8 \
+  --processor-threads 8 \
+  --pin-memory \
+  --non-blocking \
+  --scenarios batched_end_to_end,processor_only_batched,processor_only_batched_threaded,model_only_preprocessed,vision_only_preprocessed,text_only_preprocessed,split_vision_gpu_text_cpu_preprocessed \
+  --output-dir benchmark_reports/memory_io_hypotheses
+```
+
+Interpretation guide:
+
+- `processor_only_batched_threaded` vs `processor_only_batched`: CPU-side preprocessing parallelization benefit.
+- `split_vision_gpu_text_cpu_preprocessed` vs `model_only_preprocessed`: whether moving text model to CPU helps overall throughput.
+- `batched_end_to_end` with `--pin-memory --non-blocking`: host↔device transfer overhead reduction impact.
