@@ -33,7 +33,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from colpali_engine.models import ColModernVBert, ColModernVBertProcessor
-from transformers import AutoImageProcessor, AutoTokenizer
 
 
 @dataclass
@@ -51,7 +50,8 @@ class ScenarioResult:
 
 _DATALOADER_PROCESSOR: Optional[ColModernVBertProcessor] = None
 _DATALOADER_MODEL_NAME: Optional[str] = None
-_DATALOADER_USE_FAST: bool = True
+_DATALOADER_USE_FAST: bool = False
+_DATALOADER_MAX_IMAGE_EDGE: Optional[int] = None
 
 
 def _parse_int_list(raw: str) -> List[int]:
@@ -62,58 +62,28 @@ def _parse_int_list(raw: str) -> List[int]:
 
 def _load_modernvbert_processor(
     model_name: str,
-    model: Optional[ColModernVBert],
     *,
-    use_fast: bool = True,
+    use_fast: bool = False,
+    max_image_edge: Optional[int] = None,
 ) -> ColModernVBertProcessor:
-    """Construct processor from the checkpoint directly, using loaded model config as backup."""
-    image_processor = None
-    tokenizer = None
+    """Construct processor directly from the model checkpoint."""
+    processor = ColModernVBertProcessor.from_pretrained(model_name, trust_remote_code=True, use_fast=use_fast)
 
-    # Preferred: load components from the same model checkpoint.
-    try:
-        image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True, use_fast=use_fast)
-    except Exception:
-        image_processor = None
+    if max_image_edge is not None:
+        if isinstance(processor.image_processor.size, dict):
+            if "longest_edge" in processor.image_processor.size:
+                processor.image_processor.size["longest_edge"] = max_image_edge
+            if "width" in processor.image_processor.size:
+                processor.image_processor.size["width"] = min(processor.image_processor.size["width"], max_image_edge)
+            if "height" in processor.image_processor.size:
+                processor.image_processor.size["height"] = min(processor.image_processor.size["height"], max_image_edge)
+        if hasattr(processor.image_processor, "max_image_size") and isinstance(processor.image_processor.max_image_size, dict):
+            if "longest_edge" in processor.image_processor.max_image_size:
+                processor.image_processor.max_image_size["longest_edge"] = min(
+                    processor.image_processor.max_image_size["longest_edge"], max_image_edge
+                )
 
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    except Exception:
-        tokenizer = None
-
-    # Backup: derive base model names from loaded model config.
-    if image_processor is None or tokenizer is None:
-        if model is None:
-            raise RuntimeError("Could not load processor components from checkpoint and no model provided for fallback.")
-        cfg = model.config
-        vision_cfg = getattr(cfg, "vision_config", None)
-        text_cfg = getattr(cfg, "text_config", None)
-
-        vision_model_name = getattr(vision_cfg, "vision_model_name", None) if vision_cfg is not None else None
-        text_model_name = getattr(text_cfg, "text_model_name", None) if text_cfg is not None else None
-
-        if vision_model_name is None and isinstance(vision_cfg, dict):
-            vision_model_name = vision_cfg.get("vision_model_name")
-        if text_model_name is None and isinstance(text_cfg, dict):
-            text_model_name = text_cfg.get("text_model_name")
-
-        if image_processor is None:
-            if vision_model_name is None:
-                raise RuntimeError("Could not load image processor from checkpoint or infer vision model name.")
-            image_processor = AutoImageProcessor.from_pretrained(vision_model_name, trust_remote_code=True, use_fast=use_fast)
-
-        if tokenizer is None:
-            if text_model_name is None:
-                raise RuntimeError("Could not load tokenizer from checkpoint or infer text model name.")
-            tokenizer = AutoTokenizer.from_pretrained(text_model_name, trust_remote_code=True)
-
-    chat_template = getattr(tokenizer, "chat_template", None)
-    return ColModernVBertProcessor(
-        image_processor=image_processor,
-        tokenizer=tokenizer,
-        image_seq_len=64,
-        chat_template=chat_template,
-    )
+    return processor
 
 def _seed_everything(seed: int) -> None:
     random.seed(seed)
@@ -130,6 +100,9 @@ def _make_images(n: int, mode: str) -> List[Image.Image]:
         sizes = [palette[i % len(palette)] for i in range(n)]
     elif mode == "large":
         palette = [(1536, 1024), (1800, 1200), (2048, 1536)]
+        sizes = [palette[i % len(palette)] for i in range(n)]
+    elif mode == "large_capped_1024":
+        palette = [(1024, 1024), (1024, 768), (768, 1024)]
         sizes = [palette[i % len(palette)] for i in range(n)]
     else:
         raise ValueError(f"Unsupported image size mode: {mode}")
@@ -215,23 +188,24 @@ def _move_batch_to_device(
     return moved
 
 
-def _init_dataloader_worker(_worker_id: int, model_name: str, use_fast: bool) -> None:
-    global _DATALOADER_MODEL_NAME, _DATALOADER_PROCESSOR, _DATALOADER_USE_FAST
+def _init_dataloader_worker(_worker_id: int, model_name: str, use_fast: bool, max_image_edge: Optional[int]) -> None:
+    global _DATALOADER_MODEL_NAME, _DATALOADER_PROCESSOR, _DATALOADER_USE_FAST, _DATALOADER_MAX_IMAGE_EDGE
     _DATALOADER_MODEL_NAME = model_name
     _DATALOADER_USE_FAST = use_fast
+    _DATALOADER_MAX_IMAGE_EDGE = max_image_edge
     _DATALOADER_PROCESSOR = None
 
 
 def _collate_preprocess_images(images: List[Image.Image]) -> dict:
-    global _DATALOADER_MODEL_NAME, _DATALOADER_PROCESSOR
+    global _DATALOADER_MODEL_NAME, _DATALOADER_PROCESSOR, _DATALOADER_MAX_IMAGE_EDGE
     if _DATALOADER_PROCESSOR is None:
         if _DATALOADER_MODEL_NAME is None:
             raise RuntimeError("Dataloader worker is missing model name for processor initialization.")
         # model argument not needed when loading from checkpoint succeeds (common case).
         _DATALOADER_PROCESSOR = _load_modernvbert_processor(
             _DATALOADER_MODEL_NAME,
-            model=None,
             use_fast=_DATALOADER_USE_FAST,
+            max_image_edge=_DATALOADER_MAX_IMAGE_EDGE,
         )  # type: ignore[arg-type]
     return _DATALOADER_PROCESSOR.process_images(images)
 
@@ -247,7 +221,8 @@ def _scenario_batched_end_to_end_dataloader(
     prefetch_factor: int,
     non_blocking: bool = False,
     pin_memory: bool = False,
-    use_fast: bool = True,
+    use_fast: bool = False,
+    max_image_edge: Optional[int] = None,
 ) -> None:
     loader_kwargs = {
         "batch_size": batch_size,
@@ -257,12 +232,17 @@ def _scenario_batched_end_to_end_dataloader(
         "collate_fn": _collate_preprocess_images,
     }
     if dataloader_workers > 0:
-        loader_kwargs["worker_init_fn"] = partial(_init_dataloader_worker, model_name=model_name, use_fast=use_fast)
+        loader_kwargs["worker_init_fn"] = partial(
+            _init_dataloader_worker,
+            model_name=model_name,
+            use_fast=use_fast,
+            max_image_edge=max_image_edge,
+        )
         loader_kwargs["persistent_workers"] = True
         loader_kwargs["prefetch_factor"] = max(1, prefetch_factor)
 
     # Ensure the main process can also collate when workers=0
-    _init_dataloader_worker(0, model_name, use_fast)
+    _init_dataloader_worker(0, model_name, use_fast, max_image_edge)
     loader = DataLoader(list(images), **loader_kwargs)
 
     with torch.no_grad():
@@ -659,14 +639,14 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--processor-threads", type=int, default=1, help="Threads for threaded processor hypothesis.")
-    parser.add_argument("--processor-use-slow", action="store_true", help="Force slow image processor for default scenarios (default is fast).")
+    parser.add_argument("--processor-use-fast", action="store_true", help="Use the fast image processor variant.")
+    parser.add_argument("--max-image-edge", type=int, default=None, help="Optional cap for processor resize longest edge (e.g., 1024).")
     parser.add_argument("--pin-memory", action="store_true", help="Pin CPU tensors before H2D copy.")
     parser.add_argument("--non-blocking", action="store_true", help="Use non_blocking tensor transfer.")
     parser.add_argument("--dataloader-workers", type=int, default=4, help="Workers for DataLoader preprocessing scenario.")
     parser.add_argument("--prefetch-factor", type=int, default=2, help="Prefetch factor for DataLoader workers.")
     parser.add_argument("--output-dir", default="benchmark_reports")
     args = parser.parse_args()
-    args.processor_use_fast = not args.processor_use_slow
 
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -675,7 +655,11 @@ def main() -> None:
     _seed_everything(args.seed)
 
     model = ColModernVBert.from_pretrained(args.model_name).eval().to(device)
-    processor = _load_modernvbert_processor(args.model_name, model, use_fast=args.processor_use_fast)
+    processor = _load_modernvbert_processor(
+        args.model_name,
+        use_fast=args.processor_use_fast,
+        max_image_edge=args.max_image_edge,
+    )
 
     device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
 
@@ -683,7 +667,8 @@ def main() -> None:
         f"Loaded model={args.model_name} on device={device_name}. "
         f"num_docs={args.num_docs}, modes={args.image_size_modes}, batch_sizes={args.batch_sizes}, "
         f"warmup={args.warmup}, repeats={args.repeats}, threads={args.processor_threads}, "
-        f"pin_memory={args.pin_memory}, non_blocking={args.non_blocking}, dataloader_workers={args.dataloader_workers}, processor_use_fast={args.processor_use_fast}"
+        f"pin_memory={args.pin_memory}, non_blocking={args.non_blocking}, dataloader_workers={args.dataloader_workers}, "
+        f"processor_use_fast={args.processor_use_fast}, max_image_edge={args.max_image_edge}"
     )
 
     results: List[ScenarioResult] = []
@@ -696,9 +681,9 @@ def main() -> None:
     processor_fast = processor
     processor_slow = None
     if "processor_only_batched_slow" in selected:
-        processor_slow = _load_modernvbert_processor(args.model_name, model, use_fast=False)
+        processor_slow = _load_modernvbert_processor(args.model_name, use_fast=False, max_image_edge=args.max_image_edge)
     if "processor_only_batched_fast" in selected and not args.processor_use_fast:
-        processor_fast = _load_modernvbert_processor(args.model_name, model, use_fast=True)
+        processor_fast = _load_modernvbert_processor(args.model_name, use_fast=True, max_image_edge=args.max_image_edge)
 
     for mode in args.image_size_modes:
         images = _make_images(args.num_docs, mode)
@@ -776,6 +761,7 @@ def main() -> None:
                         non_blocking=args.non_blocking,
                         pin_memory=args.pin_memory,
                         use_fast=args.processor_use_fast,
+                        max_image_edge=args.max_image_edge,
                     ),
                 ),
                 (
