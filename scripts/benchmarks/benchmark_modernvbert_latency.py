@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import statistics
 import sys
@@ -16,6 +17,9 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Sequence, Tuple
+
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import torch
 from PIL import Image
@@ -177,6 +181,15 @@ def _scenario_model_only_from_preprocessed(
             _ = model(**batch)
 
 
+def _scenario_model_only_cached_preprocessed(
+    preprocessed: Sequence[dict],
+    model: ColModernVBert,
+) -> None:
+    with torch.no_grad():
+        for batch in preprocessed:
+            _ = model(**batch)
+
+
 def _render_markdown(results: Sequence[ScenarioResult], args: argparse.Namespace, device_name: str) -> str:
     header = [
         "# ModernVBERT latency benchmark report",
@@ -207,11 +220,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark ModernVBERT latency on GPU/CPU.")
     parser.add_argument("--model-name", default="ModernVBERT/colmodernvbert")
     parser.add_argument("--device", default="cuda", help="cuda or cpu")
-    parser.add_argument("--num-docs", type=int, default=64)
-    parser.add_argument("--batch-sizes", type=_parse_int_list, default=[1, 2, 4, 8, 16])
-    parser.add_argument("--image-size-modes", type=lambda s: [x.strip() for x in s.split(",")], default=["uniform", "mixed"])
-    parser.add_argument("--warmup", type=int, default=2)
-    parser.add_argument("--repeats", type=int, default=8)
+    parser.add_argument("--num-docs", type=int, default=16)
+    parser.add_argument("--batch-sizes", type=_parse_int_list, default=[1, 4, 8])
+    parser.add_argument("--image-size-modes", type=lambda s: [x.strip() for x in s.split(",")], default=["uniform"])
+    parser.add_argument("--warmup", type=int, default=1)
+    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--scenarios",
+        type=lambda s: [x.strip() for x in s.split(",")],
+        default=[
+            "sequential_end_to_end",
+            "batched_end_to_end",
+            "processor_only_sequential",
+            "processor_only_batched",
+            "model_only_preprocessed",
+        ],
+        help="Comma-separated scenario names.",
+    )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--output-dir", default="benchmark_reports")
     args = parser.parse_args()
@@ -227,28 +252,68 @@ def main() -> None:
 
     device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
 
+    print(
+        f"Loaded model={args.model_name} on device={device_name}. "
+        f"num_docs={args.num_docs}, modes={args.image_size_modes}, batch_sizes={args.batch_sizes}, "
+        f"warmup={args.warmup}, repeats={args.repeats}"
+    )
+
     results: List[ScenarioResult] = []
+
+    selected = set(args.scenarios)
 
     for mode in args.image_size_modes:
         images = _make_images(args.num_docs, mode)
+
+        # Cache for model-only scenario to avoid recomputing processor cost in timing loop.
+        model_only_cache: Dict[int, List[dict]] = {}
+        for batch_size in args.batch_sizes:
+            if batch_size > args.num_docs:
+                continue
+            chunks = _iter_chunks(images, batch_size)
+            model_only_cache[batch_size] = [processor.process_images(chunk).to(device) for chunk in chunks]
+
+        # Batch-size independent scenarios (run once per image mode)
+        invariant: List[Tuple[str, int, Callable[[], None]]] = [
+            (
+                "sequential_end_to_end",
+                1,
+                lambda images=images: _scenario_sequential_end_to_end(images, processor, model, device),
+            ),
+            (
+                "processor_only_sequential",
+                1,
+                lambda images=images: _scenario_processor_only_sequential(images, processor),
+            ),
+        ]
+
+        for scenario_name, batch_size, scenario_fn in invariant:
+            if scenario_name not in selected:
+                continue
+            print(f"Running [{mode}][batch={batch_size}] {scenario_name} ...")
+            timings = _time_scenario(scenario_fn, device=device, warmup=args.warmup, repeats=args.repeats)
+            results.append(
+                _compute_stats(
+                    scenario=scenario_name,
+                    timings=timings,
+                    num_docs=args.num_docs,
+                    batch_size=batch_size,
+                    image_size_mode=mode,
+                )
+            )
+            print(
+                f"[{mode}][batch={batch_size}] {scenario_name}: "
+                f"mean={results[-1].mean_latency_s:.4f}s docs/s={results[-1].throughput_docs_per_s:.2f}"
+            )
+
         for batch_size in args.batch_sizes:
             if batch_size > args.num_docs:
                 continue
 
-            scenarios: List[Tuple[str, Callable[[], None]]] = [
-                (
-                    "sequential_end_to_end",
-                    lambda images=images: _scenario_sequential_end_to_end(images, processor, model, device),
-                ),
+            variant: List[Tuple[str, Callable[[], None]]] = [
                 (
                     "batched_end_to_end",
-                    lambda images=images, b=batch_size: _scenario_batched_end_to_end(
-                        images, processor, model, device, b
-                    ),
-                ),
-                (
-                    "processor_only_sequential",
-                    lambda images=images: _scenario_processor_only_sequential(images, processor),
+                    lambda images=images, b=batch_size: _scenario_batched_end_to_end(images, processor, model, device, b),
                 ),
                 (
                     "processor_only_batched",
@@ -256,13 +321,14 @@ def main() -> None:
                 ),
                 (
                     "model_only_preprocessed",
-                    lambda images=images, b=batch_size: _scenario_model_only_from_preprocessed(
-                        images, processor, model, device, b
-                    ),
+                    lambda cached=model_only_cache[batch_size]: _scenario_model_only_cached_preprocessed(cached, model),
                 ),
             ]
 
-            for scenario_name, scenario_fn in scenarios:
+            for scenario_name, scenario_fn in variant:
+                if scenario_name not in selected:
+                    continue
+                print(f"Running [{mode}][batch={batch_size}] {scenario_name} ...")
                 timings = _time_scenario(scenario_fn, device=device, warmup=args.warmup, repeats=args.repeats)
                 results.append(
                     _compute_stats(

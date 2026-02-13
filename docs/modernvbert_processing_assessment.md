@@ -100,3 +100,23 @@ The report includes multiple scenarios to isolate bottlenecks:
 - `processor_only_sequential`
 - `processor_only_batched`
 - `model_only_preprocessed`
+
+
+### Notes on runtime behavior
+
+- The script defaults are intentionally **quick** (`num_docs=16`, `batch_sizes=1,4,8`, single `uniform` mode) so `python scripts/benchmarks/benchmark_modernvbert_latency.py` does not look stalled.
+- For full profiling runs, increase to your target workload (example below).
+- TensorFlow backend loading is disabled in the script (`TRANSFORMERS_NO_TF=1`) to avoid noisy CUDA factory registration logs when not needed.
+
+Full run example:
+
+```bash
+python scripts/benchmarks/benchmark_modernvbert_latency.py \
+  --device cuda \
+  --num-docs 128 \
+  --batch-sizes 1,2,4,8,16,32 \
+  --image-size-modes uniform,mixed,large \
+  --warmup 2 \
+  --repeats 8 \
+  --output-dir benchmark_reports/full_before
+```
