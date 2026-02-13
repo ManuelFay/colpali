@@ -51,6 +51,7 @@ class ScenarioResult:
 
 _DATALOADER_PROCESSOR: Optional[ColModernVBertProcessor] = None
 _DATALOADER_MODEL_NAME: Optional[str] = None
+_DATALOADER_USE_FAST: bool = True
 
 
 def _parse_int_list(raw: str) -> List[int]:
@@ -59,14 +60,19 @@ def _parse_int_list(raw: str) -> List[int]:
 
 
 
-def _load_modernvbert_processor(model_name: str, model: Optional[ColModernVBert]) -> ColModernVBertProcessor:
+def _load_modernvbert_processor(
+    model_name: str,
+    model: Optional[ColModernVBert],
+    *,
+    use_fast: bool = True,
+) -> ColModernVBertProcessor:
     """Construct processor from the checkpoint directly, using loaded model config as backup."""
     image_processor = None
     tokenizer = None
 
     # Preferred: load components from the same model checkpoint.
     try:
-        image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True, use_fast=True)
+        image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True, use_fast=use_fast)
     except Exception:
         image_processor = None
 
@@ -94,7 +100,7 @@ def _load_modernvbert_processor(model_name: str, model: Optional[ColModernVBert]
         if image_processor is None:
             if vision_model_name is None:
                 raise RuntimeError("Could not load image processor from checkpoint or infer vision model name.")
-            image_processor = AutoImageProcessor.from_pretrained(vision_model_name, trust_remote_code=True, use_fast=True)
+            image_processor = AutoImageProcessor.from_pretrained(vision_model_name, trust_remote_code=True, use_fast=use_fast)
 
         if tokenizer is None:
             if text_model_name is None:
@@ -209,9 +215,10 @@ def _move_batch_to_device(
     return moved
 
 
-def _init_dataloader_worker(_worker_id: int, model_name: str) -> None:
-    global _DATALOADER_MODEL_NAME, _DATALOADER_PROCESSOR
+def _init_dataloader_worker(_worker_id: int, model_name: str, use_fast: bool) -> None:
+    global _DATALOADER_MODEL_NAME, _DATALOADER_PROCESSOR, _DATALOADER_USE_FAST
     _DATALOADER_MODEL_NAME = model_name
+    _DATALOADER_USE_FAST = use_fast
     _DATALOADER_PROCESSOR = None
 
 
@@ -221,7 +228,11 @@ def _collate_preprocess_images(images: List[Image.Image]) -> dict:
         if _DATALOADER_MODEL_NAME is None:
             raise RuntimeError("Dataloader worker is missing model name for processor initialization.")
         # model argument not needed when loading from checkpoint succeeds (common case).
-        _DATALOADER_PROCESSOR = _load_modernvbert_processor(_DATALOADER_MODEL_NAME, model=None)  # type: ignore[arg-type]
+        _DATALOADER_PROCESSOR = _load_modernvbert_processor(
+            _DATALOADER_MODEL_NAME,
+            model=None,
+            use_fast=_DATALOADER_USE_FAST,
+        )  # type: ignore[arg-type]
     return _DATALOADER_PROCESSOR.process_images(images)
 
 
@@ -236,6 +247,7 @@ def _scenario_batched_end_to_end_dataloader(
     prefetch_factor: int,
     non_blocking: bool = False,
     pin_memory: bool = False,
+    use_fast: bool = True,
 ) -> None:
     loader_kwargs = {
         "batch_size": batch_size,
@@ -245,12 +257,12 @@ def _scenario_batched_end_to_end_dataloader(
         "collate_fn": _collate_preprocess_images,
     }
     if dataloader_workers > 0:
-        loader_kwargs["worker_init_fn"] = partial(_init_dataloader_worker, model_name=model_name)
+        loader_kwargs["worker_init_fn"] = partial(_init_dataloader_worker, model_name=model_name, use_fast=use_fast)
         loader_kwargs["persistent_workers"] = True
         loader_kwargs["prefetch_factor"] = max(1, prefetch_factor)
 
     # Ensure the main process can also collate when workers=0
-    _init_dataloader_worker(0, model_name)
+    _init_dataloader_worker(0, model_name, use_fast)
     loader = DataLoader(list(images), **loader_kwargs)
 
     with torch.no_grad():
@@ -588,6 +600,18 @@ def _build_diagnostics(results: Sequence[ScenarioResult]) -> List[str]:
         )
 
     for r in results:
+        if r.scenario != "processor_only_batched_fast":
+            continue
+        slow = lookup.get(("processor_only_batched_slow", r.image_size_mode, r.batch_size))
+        if slow is None or slow.mean_latency_s <= 0:
+            continue
+        fast_vs_slow = 100.0 * (slow.mean_latency_s - r.mean_latency_s) / slow.mean_latency_s
+        lines.append(
+            f"[{r.image_size_mode}][batch={r.batch_size}] fast-vs-slow preprocessing gain: {fast_vs_slow:+.2f}% "
+            f"(positive means fast processor is faster)."
+        )
+
+    for r in results:
         if r.scenario != "model_only_preprocessed":
             continue
         split = lookup.get(("split_vision_gpu_text_cpu_preprocessed", r.image_size_mode, r.batch_size))
@@ -620,6 +644,8 @@ def main() -> None:
             "batched_end_to_end_dataloader",
             "processor_only_sequential",
             "processor_only_batched",
+            "processor_only_batched_fast",
+            "processor_only_batched_slow",
             "model_only_preprocessed",
             "vision_only_preprocessed",
             "connector_only_preprocessed",
@@ -633,12 +659,14 @@ def main() -> None:
     )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--processor-threads", type=int, default=1, help="Threads for threaded processor hypothesis.")
+    parser.add_argument("--processor-use-slow", action="store_true", help="Force slow image processor for default scenarios (default is fast).")
     parser.add_argument("--pin-memory", action="store_true", help="Pin CPU tensors before H2D copy.")
     parser.add_argument("--non-blocking", action="store_true", help="Use non_blocking tensor transfer.")
     parser.add_argument("--dataloader-workers", type=int, default=4, help="Workers for DataLoader preprocessing scenario.")
     parser.add_argument("--prefetch-factor", type=int, default=2, help="Prefetch factor for DataLoader workers.")
     parser.add_argument("--output-dir", default="benchmark_reports")
     args = parser.parse_args()
+    args.processor_use_fast = not args.processor_use_slow
 
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -647,7 +675,7 @@ def main() -> None:
     _seed_everything(args.seed)
 
     model = ColModernVBert.from_pretrained(args.model_name).eval().to(device)
-    processor = _load_modernvbert_processor(args.model_name, model)
+    processor = _load_modernvbert_processor(args.model_name, model, use_fast=args.processor_use_fast)
 
     device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
 
@@ -655,7 +683,7 @@ def main() -> None:
         f"Loaded model={args.model_name} on device={device_name}. "
         f"num_docs={args.num_docs}, modes={args.image_size_modes}, batch_sizes={args.batch_sizes}, "
         f"warmup={args.warmup}, repeats={args.repeats}, threads={args.processor_threads}, "
-        f"pin_memory={args.pin_memory}, non_blocking={args.non_blocking}, dataloader_workers={args.dataloader_workers}"
+        f"pin_memory={args.pin_memory}, non_blocking={args.non_blocking}, dataloader_workers={args.dataloader_workers}, processor_use_fast={args.processor_use_fast}"
     )
 
     results: List[ScenarioResult] = []
@@ -664,6 +692,13 @@ def main() -> None:
     text_model_cpu = None
     if "split_vision_gpu_text_cpu_preprocessed" in selected:
         text_model_cpu = copy.deepcopy(model.model.text_model).to("cpu").eval()
+
+    processor_fast = processor
+    processor_slow = None
+    if "processor_only_batched_slow" in selected:
+        processor_slow = _load_modernvbert_processor(args.model_name, model, use_fast=False)
+    if "processor_only_batched_fast" in selected and not args.processor_use_fast:
+        processor_fast = _load_modernvbert_processor(args.model_name, model, use_fast=True)
 
     for mode in args.image_size_modes:
         images = _make_images(args.num_docs, mode)
@@ -740,11 +775,20 @@ def main() -> None:
                         prefetch_factor=args.prefetch_factor,
                         non_blocking=args.non_blocking,
                         pin_memory=args.pin_memory,
+                        use_fast=args.processor_use_fast,
                     ),
                 ),
                 (
                     "processor_only_batched",
                     lambda images=images, b=batch_size: _scenario_processor_only_batched(images, processor, b),
+                ),
+                (
+                    "processor_only_batched_fast",
+                    lambda images=images, b=batch_size, pf=processor_fast: _scenario_processor_only_batched(images, pf, b),
+                ),
+                (
+                    "processor_only_batched_slow",
+                    lambda images=images, b=batch_size, ps=processor_slow: _scenario_processor_only_batched(images, ps if ps is not None else processor, b),
                 ),
                 (
                     "processor_only_batched_threaded",

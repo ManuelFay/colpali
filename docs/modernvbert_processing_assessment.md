@@ -303,3 +303,25 @@ Interpretation:
 
 - `batched_end_to_end_dataloader` faster than `batched_end_to_end` indicates asynchronous preprocessing overlap is helping.
 - If gains are small, bottleneck is likely still in vision compute/token expansion rather than CPU-side preprocessing.
+
+
+### Fast vs slow preprocessing-only comparison
+
+To compare only preprocessing speed between fast and slow image processors:
+
+```bash
+python scripts/benchmarks/benchmark_modernvbert_latency.py \
+  --device cuda \
+  --num-docs 64 \
+  --batch-sizes 1,4,8,16 \
+  --image-size-modes uniform,mixed \
+  --warmup 2 \
+  --repeats 8 \
+  --scenarios processor_only_batched_fast,processor_only_batched_slow \
+  --output-dir benchmark_reports/processor_fast_vs_slow
+```
+
+Notes:
+
+- Default processor mode is fast.
+- Use `--processor-use-slow` only if you want all default scenarios to run with slow mode.
