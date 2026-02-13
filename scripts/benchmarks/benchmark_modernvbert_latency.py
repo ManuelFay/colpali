@@ -396,7 +396,65 @@ def _render_markdown(results: Sequence[ScenarioResult], args: argparse.Namespace
         )
         for r in results
     ]
-    return "\n".join(header + rows) + "\n"
+
+    diagnostics = _build_diagnostics(results)
+    diagnostic_lines = ["", "## Derived diagnostics", ""]
+    if diagnostics:
+        diagnostic_lines.extend([f"- {line}" for line in diagnostics])
+    else:
+        diagnostic_lines.append("- Not enough scenario overlap to derive diagnostics.")
+
+    return "\n".join(header + rows + diagnostic_lines) + "\n"
+
+
+def _result_lookup(results: Sequence[ScenarioResult]) -> Dict[Tuple[str, str, int], ScenarioResult]:
+    return {(r.scenario, r.image_size_mode, r.batch_size): r for r in results}
+
+
+def _build_diagnostics(results: Sequence[ScenarioResult]) -> List[str]:
+    lookup = _result_lookup(results)
+    lines: List[str] = []
+
+    for r in results:
+        if r.scenario != "model_only_preprocessed":
+            continue
+
+        key = (r.image_size_mode, r.batch_size)
+        vision = lookup.get(("vision_only_preprocessed", *key))
+        text = lookup.get(("text_only_preprocessed", *key))
+        if vision is not None and text is not None and r.mean_latency_s > 0:
+            vision_share = 100.0 * vision.mean_latency_s / r.mean_latency_s
+            text_share = 100.0 * text.mean_latency_s / r.mean_latency_s
+            lines.append(
+                f"[{r.image_size_mode}][batch={r.batch_size}] model split: "
+                f"vision≈{vision_share:.1f}% vs text≈{text_share:.1f}% of model-only latency."
+            )
+
+    for r in results:
+        if r.scenario != "processor_only_batched":
+            continue
+        threaded = lookup.get(("processor_only_batched_threaded", r.image_size_mode, r.batch_size))
+        if threaded is None or threaded.mean_latency_s <= 0:
+            continue
+        delta = 100.0 * (r.mean_latency_s - threaded.mean_latency_s) / r.mean_latency_s
+        lines.append(
+            f"[{r.image_size_mode}][batch={r.batch_size}] threaded preprocessing delta: {delta:+.2f}% "
+            f"(small deltas usually indicate Python-level overhead/GIL dominates)."
+        )
+
+    for r in results:
+        if r.scenario != "model_only_preprocessed":
+            continue
+        split = lookup.get(("split_vision_gpu_text_cpu_preprocessed", r.image_size_mode, r.batch_size))
+        if split is None or r.mean_latency_s <= 0:
+            continue
+        regression = 100.0 * (split.mean_latency_s - r.mean_latency_s) / r.mean_latency_s
+        lines.append(
+            f"[{r.image_size_mode}][batch={r.batch_size}] split vision→GPU/text→CPU delta: {regression:+.2f}% "
+            f"(positive means PCIe transfer + CPU compute is slower)."
+        )
+
+    return lines
 
 
 def main() -> None:

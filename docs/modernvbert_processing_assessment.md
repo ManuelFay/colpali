@@ -168,3 +168,23 @@ Interpretation guide:
 - `processor_only_batched_threaded` vs `processor_only_batched`: CPU-side preprocessing parallelization benefit.
 - `split_vision_gpu_text_cpu_preprocessed` vs `model_only_preprocessed`: whether moving text model to CPU helps overall throughput.
 - `batched_end_to_end` with `--pin-memory --non-blocking`: host↔device transfer overhead reduction impact.
+
+### Interpreting the latest user-observed pattern
+
+If your report shows the following shape:
+
+- `vision_only_preprocessed` >> `text_only_preprocessed`
+- `processor_only_batched_threaded` ≈ `processor_only_batched`
+- `split_vision_gpu_text_cpu_preprocessed` much slower than `model_only_preprocessed`
+
+then the bottleneck is not the text model. It means:
+
+1. Vision + connector dominates model-side cost.
+2. Threaded preprocessing is likely limited by Python-level orchestration, serialization, or non-vectorized internals (so simple threads do not scale).
+3. Moving text to CPU adds PCIe transfer + CPU execution overhead, and is a net regression.
+
+In this case, prioritize:
+
+- reducing crop/token budget,
+- true process-based DataLoader parallelism + overlap (prefetch/pinned memory/non-blocking H2D),
+- bucketed batching by image-token budget to reduce padding.
