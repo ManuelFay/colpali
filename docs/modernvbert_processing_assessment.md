@@ -208,3 +208,28 @@ In this case, prioritize:
 - reducing crop/token budget,
 - true process-based DataLoader parallelism + overlap (prefetch/pinned memory/non-blocking H2D),
 - bucketed batching by image-token budget to reduce padding.
+
+
+### Component-level timing command (preprocessing vs connector vs inputs merger vs text forward)
+
+To isolate your hypothesis around `inputs_merger`, run:
+
+```bash
+python scripts/benchmarks/benchmark_modernvbert_latency.py \
+  --device cuda \
+  --num-docs 64 \
+  --batch-sizes 1,4,8,16 \
+  --image-size-modes uniform,mixed \
+  --warmup 2 \
+  --repeats 8 \
+  --scenarios processor_only_batched,vision_only_preprocessed,connector_only_preprocessed,text_only_preprocessed,inputs_merger_only_preprocessed,text_model_only_preprocessed,model_only_preprocessed \
+  --output-dir benchmark_reports/component_breakdown
+```
+
+Interpretation:
+
+- `processor_only_batched`: preprocessing cost.
+- `connector_only_preprocessed`: projection-only cost after vision hidden states are produced.
+- `inputs_merger_only_preprocessed`: merge cost only (without text transformer forward).
+- `text_model_only_preprocessed`: text transformer forward over pre-merged embeddings.
+- `text_only_preprocessed`: merge + text transformer combined.

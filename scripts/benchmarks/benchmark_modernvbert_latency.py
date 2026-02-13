@@ -321,6 +321,75 @@ def _build_image_hidden_state_cache(
     return cache
 
 
+def _build_vision_hidden_state_cache(
+    preprocessed: Sequence[dict],
+    model: ColModernVBert,
+) -> List[torch.Tensor]:
+    core_model = model.model
+    cache: List[torch.Tensor] = []
+    with torch.no_grad():
+        for batch in preprocessed:
+            pixel_values = _extract_real_pixel_values(batch["pixel_values"])
+            cache.append(core_model.vision_model(pixel_values=pixel_values).last_hidden_state)
+    return cache
+
+
+def _build_inputs_embeds_cache(
+    preprocessed: Sequence[dict],
+    image_hidden_states_cache: Sequence[torch.Tensor],
+    model: ColModernVBert,
+) -> List[torch.Tensor]:
+    core_model = model.model
+    cache: List[torch.Tensor] = []
+    with torch.no_grad():
+        for batch, image_hidden_states in zip(preprocessed, image_hidden_states_cache):
+            input_ids = batch["input_ids"]
+            inputs_embeds = core_model.text_model.get_input_embeddings()(input_ids).to(input_ids.device)
+            cache.append(core_model.inputs_merger(input_ids, inputs_embeds, image_hidden_states))
+    return cache
+
+
+def _scenario_connector_only_cached_preprocessed(
+    vision_hidden_states_cache: Sequence[torch.Tensor],
+    model: ColModernVBert,
+) -> None:
+    core_model = model.model
+    with torch.no_grad():
+        for image_hidden_states in vision_hidden_states_cache:
+            _ = core_model.connector(image_hidden_states)
+
+
+def _scenario_inputs_merger_only_cached_preprocessed(
+    preprocessed: Sequence[dict],
+    image_hidden_states_cache: Sequence[torch.Tensor],
+    model: ColModernVBert,
+) -> None:
+    core_model = model.model
+    with torch.no_grad():
+        for batch, image_hidden_states in zip(preprocessed, image_hidden_states_cache):
+            input_ids = batch["input_ids"]
+            inputs_embeds = core_model.text_model.get_input_embeddings()(input_ids).to(input_ids.device)
+            _ = core_model.inputs_merger(input_ids, inputs_embeds, image_hidden_states)
+
+
+def _scenario_text_model_only_cached_preprocessed(
+    preprocessed: Sequence[dict],
+    merged_inputs_embeds_cache: Sequence[torch.Tensor],
+    model: ColModernVBert,
+) -> None:
+    core_model = model.model
+    with torch.no_grad():
+        for batch, merged_inputs_embeds in zip(preprocessed, merged_inputs_embeds_cache):
+            _ = core_model.text_model(
+                inputs_embeds=merged_inputs_embeds,
+                attention_mask=batch.get("attention_mask"),
+                position_ids=batch.get("position_ids"),
+                output_attentions=False,
+                output_hidden_states=False,
+                return_dict=False,
+            )
+
+
 def _scenario_text_only_cached_preprocessed(
     preprocessed: Sequence[dict],
     image_hidden_states_cache: Sequence[torch.Tensor],
@@ -430,6 +499,24 @@ def _build_diagnostics(results: Sequence[ScenarioResult]) -> List[str]:
                 f"vision≈{vision_share:.1f}% vs text≈{text_share:.1f}% of model-only latency."
             )
 
+        connector = lookup.get(("connector_only_preprocessed", *key))
+        if connector is not None and vision is not None and vision.mean_latency_s > 0:
+            connector_share = 100.0 * connector.mean_latency_s / vision.mean_latency_s
+            lines.append(
+                f"[{r.image_size_mode}][batch={r.batch_size}] vision-path split: "
+                f"connector≈{connector_share:.1f}% of vision-only latency."
+            )
+
+        merger = lookup.get(("inputs_merger_only_preprocessed", *key))
+        text_forward = lookup.get(("text_model_only_preprocessed", *key))
+        if merger is not None and text_forward is not None and text is not None and text.mean_latency_s > 0:
+            merger_share = 100.0 * merger.mean_latency_s / text.mean_latency_s
+            text_forward_share = 100.0 * text_forward.mean_latency_s / text.mean_latency_s
+            lines.append(
+                f"[{r.image_size_mode}][batch={r.batch_size}] text-path split: "
+                f"inputs_merger≈{merger_share:.1f}% vs text_forward≈{text_forward_share:.1f}% of text-only latency."
+            )
+
     for r in results:
         if r.scenario != "processor_only_batched":
             continue
@@ -476,7 +563,10 @@ def main() -> None:
             "processor_only_batched",
             "model_only_preprocessed",
             "vision_only_preprocessed",
+            "connector_only_preprocessed",
             "text_only_preprocessed",
+            "inputs_merger_only_preprocessed",
+            "text_model_only_preprocessed",
             "processor_only_batched_threaded",
             "split_vision_gpu_text_cpu_preprocessed",
         ],
@@ -519,14 +609,21 @@ def main() -> None:
 
         # Cache for model-only scenario to avoid recomputing processor cost in timing loop.
         model_only_cache: Dict[int, List[dict]] = {}
-        vision_text_cache: Dict[int, Tuple[List[dict], List[torch.Tensor]]] = {}
+        vision_hidden_cache: Dict[int, List[torch.Tensor]] = {}
+        connector_cache: Dict[int, List[torch.Tensor]] = {}
+        merged_inputs_embeds_cache: Dict[int, List[torch.Tensor]] = {}
         for batch_size in args.batch_sizes:
             if batch_size > args.num_docs:
                 continue
             chunks = _iter_chunks(images, batch_size)
             model_only_cache[batch_size] = [processor.process_images(chunk).to(device) for chunk in chunks]
-            image_hidden_states_cache = _build_image_hidden_state_cache(model_only_cache[batch_size], model)
-            vision_text_cache[batch_size] = (model_only_cache[batch_size], image_hidden_states_cache)
+            vision_hidden_cache[batch_size] = _build_vision_hidden_state_cache(model_only_cache[batch_size], model)
+            connector_cache[batch_size] = [
+                model.model.connector(image_hidden_states) for image_hidden_states in vision_hidden_cache[batch_size]
+            ]
+            merged_inputs_embeds_cache[batch_size] = _build_inputs_embeds_cache(
+                model_only_cache[batch_size], connector_cache[batch_size], model
+            )
 
         # Batch-size independent scenarios (run once per image mode)
         invariant: List[Tuple[str, int, Callable[[], None]]] = [
@@ -589,9 +686,25 @@ def main() -> None:
                     lambda cached=model_only_cache[batch_size]: _scenario_vision_only_cached_preprocessed(cached, model),
                 ),
                 (
+                    "connector_only_preprocessed",
+                    lambda vh=vision_hidden_cache[batch_size]: _scenario_connector_only_cached_preprocessed(vh, model),
+                ),
+                (
                     "text_only_preprocessed",
-                    lambda cached=vision_text_cache[batch_size][0], ihs=vision_text_cache[batch_size][1]: _scenario_text_only_cached_preprocessed(
+                    lambda cached=model_only_cache[batch_size], ihs=connector_cache[batch_size]: _scenario_text_only_cached_preprocessed(
                         cached, ihs, model
+                    ),
+                ),
+                (
+                    "inputs_merger_only_preprocessed",
+                    lambda cached=model_only_cache[batch_size], ihs=connector_cache[batch_size]: _scenario_inputs_merger_only_cached_preprocessed(
+                        cached, ihs, model
+                    ),
+                ),
+                (
+                    "text_model_only_preprocessed",
+                    lambda cached=model_only_cache[batch_size], embeds=merged_inputs_embeds_cache[batch_size]: _scenario_text_model_only_cached_preprocessed(
+                        cached, embeds, model
                     ),
                 ),
                 (
