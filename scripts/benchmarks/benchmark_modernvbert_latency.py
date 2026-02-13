@@ -66,7 +66,7 @@ def _load_modernvbert_processor(model_name: str, model: Optional[ColModernVBert]
 
     # Preferred: load components from the same model checkpoint.
     try:
-        image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True)
+        image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True, use_fast=True)
     except Exception:
         image_processor = None
 
@@ -94,7 +94,7 @@ def _load_modernvbert_processor(model_name: str, model: Optional[ColModernVBert]
         if image_processor is None:
             if vision_model_name is None:
                 raise RuntimeError("Could not load image processor from checkpoint or infer vision model name.")
-            image_processor = AutoImageProcessor.from_pretrained(vision_model_name, trust_remote_code=True)
+            image_processor = AutoImageProcessor.from_pretrained(vision_model_name, trust_remote_code=True, use_fast=True)
 
         if tokenizer is None:
             if text_model_name is None:
