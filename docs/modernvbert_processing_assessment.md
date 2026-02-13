@@ -169,6 +169,26 @@ Interpretation guide:
 - `split_vision_gpu_text_cpu_preprocessed` vs `model_only_preprocessed`: whether moving text model to CPU helps overall throughput.
 - `batched_end_to_end` with `--pin-memory --non-blocking`: host↔device transfer overhead reduction impact.
 
+### Focused SigLIP-only embedding benchmark (sequential vs batched)
+
+If you want to isolate pure SigLIP embedding throughput (without ModernVBERT text path), run:
+
+```bash
+python scripts/benchmarks/benchmark_siglip_embedding.py \
+  --device cuda \
+  --num-images 128 \
+  --image-size 1024 \
+  --batch-sizes 1,2,4,8,16,32 \
+  --warmup 2 \
+  --repeats 8 \
+  --output-dir benchmark_reports/siglip_only
+```
+
+This writes:
+
+- `siglip_embedding_benchmark.json`
+- `siglip_embedding_benchmark.md`
+
 ### Interpreting the latest user-observed pattern
 
 If your report shows the following shape:
