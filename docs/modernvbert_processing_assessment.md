@@ -70,3 +70,33 @@ Added `tests/models/modernvbert/test_processing_throughput_benchmarks.py` with:
 - End-to-end latency percentiles.
 - CPU preprocessing share of total wall-clock.
 - Padding ratio in LM batches.
+
+## Reproducible GPU latency benchmark runner
+
+Use `scripts/benchmarks/benchmark_modernvbert_latency.py` to generate before/after reports.
+
+Example:
+
+```bash
+python scripts/benchmarks/benchmark_modernvbert_latency.py \
+  --device cuda \
+  --num-docs 64 \
+  --batch-sizes 1,2,4,8,16 \
+  --image-size-modes uniform,mixed,large \
+  --warmup 2 \
+  --repeats 8 \
+  --output-dir benchmark_reports/before
+```
+
+The script produces:
+
+- `modernvbert_latency_report.json`
+- `modernvbert_latency_report.md`
+
+The report includes multiple scenarios to isolate bottlenecks:
+
+- `sequential_end_to_end`
+- `batched_end_to_end`
+- `processor_only_sequential`
+- `processor_only_batched`
+- `model_only_preprocessed`
