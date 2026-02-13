@@ -31,6 +31,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from colpali_engine.models import ColModernVBert, ColModernVBertProcessor
+from colpali_engine.utils.transformers_wrappers import AutoProcessorWrapper
 
 
 @dataclass
@@ -49,6 +50,33 @@ class ScenarioResult:
 def _parse_int_list(raw: str) -> List[int]:
     return [int(x.strip()) for x in raw.split(",") if x.strip()]
 
+
+
+
+def _load_modernvbert_processor(model_name: str) -> ColModernVBertProcessor:
+    try:
+        return ColModernVBertProcessor.from_pretrained(model_name)
+    except TypeError as exc:
+        # Some transformers/runtime combinations fail to route args into Idefics3Processor-based
+        # custom processors. Fallback: load generic AutoProcessor and re-wrap into ColModernVBertProcessor.
+        auto_processor = AutoProcessorWrapper(model_name)
+
+        image_processor = getattr(auto_processor, "image_processor", None)
+        tokenizer = getattr(auto_processor, "tokenizer", None)
+        if image_processor is None or tokenizer is None:
+            raise RuntimeError(
+                "Failed to construct ColModernVBertProcessor fallback: AutoProcessor is missing "
+                "image_processor/tokenizer components."
+            ) from exc
+
+        image_seq_len = getattr(auto_processor, "image_seq_len", 64)
+        chat_template = getattr(tokenizer, "chat_template", None)
+        return ColModernVBertProcessor(
+            image_processor=image_processor,
+            tokenizer=tokenizer,
+            image_seq_len=image_seq_len,
+            chat_template=chat_template,
+        )
 
 def _seed_everything(seed: int) -> None:
     random.seed(seed)
@@ -386,7 +414,7 @@ def main() -> None:
 
     _seed_everything(args.seed)
 
-    processor = ColModernVBertProcessor.from_pretrained(args.model_name)
+    processor = _load_modernvbert_processor(args.model_name)
     model = ColModernVBert.from_pretrained(args.model_name).eval().to(device)
 
     device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
