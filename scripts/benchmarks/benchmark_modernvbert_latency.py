@@ -31,7 +31,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from colpali_engine.models import ColModernVBert, ColModernVBertProcessor
-from transformers import AutoConfig, AutoImageProcessor, AutoTokenizer
+from transformers import AutoImageProcessor, AutoTokenizer
 
 
 @dataclass
@@ -53,29 +53,45 @@ def _parse_int_list(raw: str) -> List[int]:
 
 
 
-def _load_modernvbert_processor(model_name: str) -> ColModernVBertProcessor:
-    """Direct processor construction for ModernVBERT (no fallback chain)."""
-    cfg = AutoConfig.from_pretrained(model_name, trust_remote_code=True)
+def _load_modernvbert_processor(model_name: str, model: ColModernVBert) -> ColModernVBertProcessor:
+    """Construct processor from the checkpoint directly, using loaded model config as backup."""
+    image_processor = None
+    tokenizer = None
 
-    vision_cfg = getattr(cfg, "vision_config", None)
-    text_cfg = getattr(cfg, "text_config", None)
+    # Preferred: load components from the same model checkpoint.
+    try:
+        image_processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=True)
+    except Exception:
+        image_processor = None
 
-    vision_model_name = getattr(vision_cfg, "vision_model_name", None) if vision_cfg is not None else None
-    text_model_name = getattr(text_cfg, "text_model_name", None) if text_cfg is not None else None
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    except Exception:
+        tokenizer = None
 
-    if vision_model_name is None and isinstance(vision_cfg, dict):
-        vision_model_name = vision_cfg.get("vision_model_name")
-    if text_model_name is None and isinstance(text_cfg, dict):
-        text_model_name = text_cfg.get("text_model_name")
+    # Backup: derive base model names from loaded model config.
+    if image_processor is None or tokenizer is None:
+        cfg = model.config
+        vision_cfg = getattr(cfg, "vision_config", None)
+        text_cfg = getattr(cfg, "text_config", None)
 
-    if vision_model_name is None or text_model_name is None:
-        raise RuntimeError(
-            "Could not infer vision/text base model names from ModernVBERT config. "
-            f"vision_model_name={vision_model_name}, text_model_name={text_model_name}"
-        )
+        vision_model_name = getattr(vision_cfg, "vision_model_name", None) if vision_cfg is not None else None
+        text_model_name = getattr(text_cfg, "text_model_name", None) if text_cfg is not None else None
 
-    image_processor = AutoImageProcessor.from_pretrained(vision_model_name, trust_remote_code=True)
-    tokenizer = AutoTokenizer.from_pretrained(text_model_name, trust_remote_code=True)
+        if vision_model_name is None and isinstance(vision_cfg, dict):
+            vision_model_name = vision_cfg.get("vision_model_name")
+        if text_model_name is None and isinstance(text_cfg, dict):
+            text_model_name = text_cfg.get("text_model_name")
+
+        if image_processor is None:
+            if vision_model_name is None:
+                raise RuntimeError("Could not load image processor from checkpoint or infer vision model name.")
+            image_processor = AutoImageProcessor.from_pretrained(vision_model_name, trust_remote_code=True)
+
+        if tokenizer is None:
+            if text_model_name is None:
+                raise RuntimeError("Could not load tokenizer from checkpoint or infer text model name.")
+            tokenizer = AutoTokenizer.from_pretrained(text_model_name, trust_remote_code=True)
 
     chat_template = getattr(tokenizer, "chat_template", None)
     return ColModernVBertProcessor(
@@ -421,8 +437,8 @@ def main() -> None:
 
     _seed_everything(args.seed)
 
-    processor = _load_modernvbert_processor(args.model_name)
     model = ColModernVBert.from_pretrained(args.model_name).eval().to(device)
+    processor = _load_modernvbert_processor(args.model_name, model)
 
     device_name = torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu"
 
