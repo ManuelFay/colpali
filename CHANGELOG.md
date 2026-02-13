@@ -10,10 +10,38 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - Add ColQwen3 and BiQwen3 support (model + processor).
+- Add regression tests for `ColPaliProcessor` to validate Transformers v5 modality registration and fallback loading behavior when a processor bundle is incomplete.
+
+### Changed
+
+- Bump runtime compatibility to `transformers>=5.0.0,<6.0.0`, `peft>=0.18.0,<0.19.0`, and `accelerate>=1.1.0,<2.0.0`.
+- Update supported Python versions to `>=3.10,<3.15` and align CI workflows to Python 3.10–3.14.
+- Update all affected processor subclasses (`Qwen2/Qwen2.5/Qwen3`, `Gemma3`, `Idefics3`, `ModernVBert`, `Qwen2.5 Omni`) to explicit `__init__` modality signatures required by Transformers v5 `ProcessorMixin`.
+
+### Fixed
+
+- Fix ColPali/PaliGemma model loading under Transformers v5 by adapting wrapper internals to new module layout and tied-weights expectations.
+- Fix ColPali processor loading for checkpoints without a complete processor bundle by explicitly falling back to `AutoImageProcessor` + `AutoTokenizer`.
+- Fix ColPali collator image token id lookup to use `convert_tokens_to_ids`, compatible with Transformers v5 tokenizer backend changes.
+- Fix test collection on Python 3.14 by making `tests` an explicit package (`tests/__init__.py`).
+- Fix CI formatting failure by applying `ruff format` to updated ColPali processing tests.
+- Fix ColQwen2 and ColQwen2.5 initialization across Transformers versions by resolving hidden size from either `config.hidden_size` or `config.text_config.hidden_size`.
+- Call `post_init()` in ColIdefics3 and ColModernVBert to align model initialization with Transformers v5 expectations.
+- Improve `VisualRetrieverCollator` image token id resolution by preferring processor-level `image_token_id` when available.
+- Fix ColQwen2 and ColQwen2.5 LoRA checkpoint key remapping for `custom_text_proj` (`base_model.model.*` -> model keys) to avoid missing/unexpected adapter keys at load time.
+- Fix ColPali LoRA adapter key remapping for `custom_text_proj` (`base_model.model.*` -> model keys) and ignore expected missing `model.lm_head.weight` during load.
+- Fix ColModernVBert LoRA adapter key remapping for `custom_text_proj` (`base_model.model.*` -> model keys) to avoid missing/unexpected adapter keys at load time.
+- Fix ColQwen2.5-Omni LoRA adapter key remapping for `custom_text_proj` (`base_model.model.*` -> model keys) to avoid missing/unexpected adapter keys at load time.
+- Fix ColQwen3 LoRA adapter key remapping for `custom_text_proj` (`base_model.model.*` -> model keys) to avoid missing/unexpected adapter keys at load time.
+- Fix ColGemma3 LoRA adapter key remapping for `custom_text_proj` (`base_model.model.*` -> model keys) to avoid missing/unexpected adapter keys at load time.
+- Ensure adapter loading remains robust across Transformers v5 base-load and PEFT adapter-load code paths, preventing silent fallback to randomly initialized projection adapters in retrieval models.
 
 ### Tests
 
 - Cover ColQwen3 processing and modeling with slow integration tests.
+- Run targeted non-slow processing tests for Gemma3, Idefics3, ModernVBert, Qwen2, Qwen2.5 and Qwen3 after the Transformers v5 processor-signature migration.
+- Run slow ColPali model-loading and query-forward integration tests under Transformers v5 to validate end-to-end loading behavior.
+- Expand adapter checkpoint key remapping regression tests to cover ColPali, ColGemma3, ColQwen2, ColQwen2.5, ColQwen3, ColQwen2.5-Omni and ColModernVBert, including registry-backed conversion checks where needed.
 
 ## [0.3.13] - 2025-11-15
 

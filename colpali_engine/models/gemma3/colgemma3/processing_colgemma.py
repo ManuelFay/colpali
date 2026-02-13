@@ -49,10 +49,19 @@ class ColGemmaProcessor3(BaseVisualRetrieverProcessor, Gemma3Processor):
 
     def __init__(
         self,
-        *args,
+        image_processor,
+        tokenizer,
+        chat_template=None,
+        image_seq_length: int = 256,
         **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            image_processor=image_processor,
+            tokenizer=tokenizer,
+            chat_template=chat_template,
+            image_seq_length=image_seq_length,
+            **kwargs,
+        )
         # Set padding side to left (important for decoder-only models)
         self.tokenizer.padding_side = "left"
 

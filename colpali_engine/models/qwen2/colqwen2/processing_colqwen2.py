@@ -27,10 +27,19 @@ class ColQwen2Processor(BaseVisualRetrieverProcessor, Qwen2VLProcessor):
 
     def __init__(
         self,
-        *args,
+        image_processor=None,
+        tokenizer=None,
+        video_processor=None,
+        chat_template=None,
         **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            image_processor=image_processor,
+            tokenizer=tokenizer,
+            video_processor=video_processor,
+            chat_template=chat_template,
+            **kwargs,
+        )
         self.tokenizer.padding_side = "left"
 
     @classmethod

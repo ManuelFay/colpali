@@ -2,6 +2,8 @@ from typing import ClassVar
 
 import torch
 from torch import nn
+from transformers.conversion_mapping import get_checkpoint_conversion_mapping, register_checkpoint_conversion_mapping
+from transformers.core_model_loading import WeightRenaming
 from transformers.models.qwen3_vl import Qwen3VLConfig, Qwen3VLModel
 
 
@@ -19,6 +21,7 @@ class ColQwen3(Qwen3VLModel):
 
     main_input_name: ClassVar[str] = "doc_input_ids"  # transformers-related
     _checkpoint_conversion_mapping = {
+        r"^base_model\.model\.custom_text_proj": "custom_text_proj",
         r"^model\.visual": "visual",
         r"^model\.language_model": "language_model",
         r"^model\.": "",
@@ -59,7 +62,8 @@ class ColQwen3(Qwen3VLModel):
     def from_pretrained(cls, *args, **kwargs):
         key_mapping = kwargs.pop("key_mapping", None)
         if key_mapping is None:
-            key_mapping = getattr(cls, "_checkpoint_conversion_mapping", None)
+            key_mapping = dict(getattr(super(), "_checkpoint_conversion_mapping", {}))
+            key_mapping.update(getattr(cls, "_checkpoint_conversion_mapping", {}))
         return super().from_pretrained(*args, **kwargs, key_mapping=key_mapping)
 
     def forward(self, *args, **kwargs) -> torch.Tensor:
@@ -99,3 +103,13 @@ class ColQwen3(Qwen3VLModel):
     @property
     def spatial_merge_size(self) -> int:
         return self.visual.config.spatial_merge_size
+
+
+if get_checkpoint_conversion_mapping("qwen3_vl") is None:
+    register_checkpoint_conversion_mapping(
+        "qwen3_vl",
+        [
+            WeightRenaming(source_patterns=k, target_patterns=v)
+            for k, v in ColQwen3._checkpoint_conversion_mapping.items()
+        ],
+    )

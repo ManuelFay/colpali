@@ -23,10 +23,19 @@ class ColQwen2_5OmniProcessor(BaseVisualRetrieverProcessor, Qwen2_5OmniProcessor
 
     def __init__(
         self,
-        *args,
-        **kwargs,
+        image_processor=None,
+        video_processor=None,
+        feature_extractor=None,
+        tokenizer=None,
+        chat_template=None,
     ):
-        super().__init__(*args, **kwargs)
+        super().__init__(
+            image_processor=image_processor,
+            video_processor=video_processor,
+            feature_extractor=feature_extractor,
+            tokenizer=tokenizer,
+            chat_template=chat_template,
+        )
         self.tokenizer.padding_side = "left"
         self.chat_template = self.tokenizer.chat_template
 

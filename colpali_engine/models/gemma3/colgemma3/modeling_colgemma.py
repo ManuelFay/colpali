@@ -37,6 +37,9 @@ class ColGemma3(Gemma3Model):
     """
 
     main_input_name: ClassVar[str] = "doc_input_ids"  # transformers-related
+    _checkpoint_conversion_mapping = {
+        r"^base_model\.model\.custom_text_proj": "custom_text_proj",
+    }
 
     def __init__(
         self,
@@ -54,7 +57,8 @@ class ColGemma3(Gemma3Model):
     def from_pretrained(cls, *args, **kwargs):
         key_mapping = kwargs.pop("key_mapping", None)
         if key_mapping is None:
-            key_mapping = super()._checkpoint_conversion_mapping
+            key_mapping = dict(getattr(super(), "_checkpoint_conversion_mapping", {}))
+            key_mapping.update(cls._checkpoint_conversion_mapping)
         return super().from_pretrained(*args, **kwargs, key_mapping=key_mapping)
 
     @property

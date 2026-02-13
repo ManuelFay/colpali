@@ -24,8 +24,21 @@ class ColIdefics3Processor(
     image_token: ClassVar[str] = "<image>"
     visual_prompt_prefix: ClassVar[str] = "<|im_start|>User:<image>Describe the image.<end_of_utterance>\nAssistant:"
 
-    def __init__(self, *args, image_seq_len=64, **kwargs):
-        super().__init__(*args, image_seq_len=image_seq_len, **kwargs)
+    def __init__(
+        self,
+        image_processor,
+        tokenizer=None,
+        image_seq_len=64,
+        chat_template=None,
+        **kwargs,
+    ):
+        super().__init__(
+            image_processor=image_processor,
+            tokenizer=tokenizer,
+            image_seq_len=image_seq_len,
+            chat_template=chat_template,
+            **kwargs,
+        )
         self.tokenizer.padding_side = "left"
 
     def process_images(

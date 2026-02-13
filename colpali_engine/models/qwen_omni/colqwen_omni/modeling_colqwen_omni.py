@@ -2,6 +2,8 @@ from typing import ClassVar
 
 import torch
 from torch import nn
+from transformers.conversion_mapping import get_checkpoint_conversion_mapping, register_checkpoint_conversion_mapping
+from transformers.core_model_loading import WeightRenaming
 from transformers.models.qwen2_5_omni import Qwen2_5OmniThinkerConfig, Qwen2_5OmniThinkerForConditionalGeneration
 
 
@@ -14,6 +16,10 @@ class ColQwen2_5Omni(Qwen2_5OmniThinkerForConditionalGeneration):  # noqa: N801
 
     main_input_name: ClassVar[str] = "doc_input_ids"  # transformers-related
 
+    _checkpoint_conversion_mapping = {
+        r"^base_model\.model\.custom_text_proj": "custom_text_proj",
+    }
+
     def __init__(self, config: Qwen2_5OmniThinkerConfig, mask_non_image_embeddings: bool = False):
         super().__init__(config=config)
         self.dim = 128
@@ -22,6 +28,14 @@ class ColQwen2_5Omni(Qwen2_5OmniThinkerForConditionalGeneration):  # noqa: N801
         self.padding_side = "left"
         self.mask_non_image_embeddings = mask_non_image_embeddings
         self.post_init()
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        key_mapping = kwargs.pop("key_mapping", None)
+        if key_mapping is None:
+            key_mapping = dict(getattr(super(), "_checkpoint_conversion_mapping", {}))
+            key_mapping.update(cls._checkpoint_conversion_mapping)
+        return super().from_pretrained(*args, **kwargs, key_mapping=key_mapping)
 
     def get_output_embeddings(self) -> None:  # -> None | Any:
         """
@@ -71,3 +85,13 @@ class ColQwen2_5Omni(Qwen2_5OmniThinkerForConditionalGeneration):  # noqa: N801
     def spatial_merge_size(self, value):
         # allow assignment
         self.visual.config.spatial_merge_size = value
+
+
+if get_checkpoint_conversion_mapping("qwen2_5_omni_thinker") is None:
+    register_checkpoint_conversion_mapping(
+        "qwen2_5_omni_thinker",
+        [
+            WeightRenaming(source_patterns=k, target_patterns=v)
+            for k, v in ColQwen2_5Omni._checkpoint_conversion_mapping.items()
+        ],
+    )
